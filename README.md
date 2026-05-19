@@ -128,7 +128,7 @@ UI 功能：
 | `label_x` / `label_y` | `""` | 坐标轴标签 | 全部 |
 | `axes_y_min` / `axes_y_max` | `null` | Y 轴范围 | 全部 |
 | `axes_x_tick_rotation` | `0` | X 轴刻度旋转角度 | 全部 |
-| `axes_y_scale` | `"linear"` | Y 轴缩放：`"linear"` / `"log"` | 全部 |
+| `axes_y_scale` | `"linear"` | Y 轴缩放：`"linear"` / `"log"`（水平柱状图自动映射到 X 轴） | 全部（heatmap 除外） |
 | `style_palette_override` | `null` | 配色覆盖：`morandi` / `nature_d` / `tab10` / `coolwarm` | 全部 |
 | `params_orientation` | `"vertical"` | 柱方向：`"vertical"` / `"horizontal"` | bar |
 | `params_stacked` | `false` | 堆叠柱状图 | bar |
@@ -137,7 +137,7 @@ UI 功能：
 | `params_hatch` | `null` | 柱子纹理：`"/"` `"\\"` `"\|"` `"-"` 等 | bar |
 | `params_edgecolor` | `null` | 纹理边框颜色 | bar |
 | `params_hatch_linewidth` | `0.5` | 纹理线宽 | bar |
-| `params_markers` | `true` | 显示数据点标记 | line |
+| `params_show_markers` | `true` | 是否显示数据点标记（布尔值） | line |
 | `params_smooth` | `false` | 平滑曲线 | line |
 | `params_linestyle` | `"solid"` | 线型：`"solid"` / `"dashed"` / `"dotted"` / `"dashdot"` | line |
 | `params_line_colors` | `null` | 自定义颜色列表，覆盖主题配色 | line |
@@ -148,7 +148,7 @@ UI 功能：
 | `params_show_points` | `"outliers"` | 数据点显示：`"all"` / `"outliers"` / `"none"` | box |
 | `params_notch` | `false` | 缺口箱线图 | box |
 | `params_annot` | `true` | 显示数值标注 | heatmap |
-| `params_fmt` | `".2f"` | 数值格式 | heatmap |
+| `params_annot_fmt` | `".2f"` | 单元格数值格式字符串（与 `params_annot` 配套使用） | heatmap |
 
 ---
 

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from schema import (
     CHART_TYPES,
     OPTIONAL_DEFAULTS,
+    PALETTE_OVERRIDES,
     REQUIRED_FIELDS,
     STYLE_THEMES,
 )
@@ -38,7 +39,8 @@ def validate(spec: dict) -> ValidationResult:
     2. chart_type 在 CHART_TYPES 枚举内。
     3. style_theme 在 STYLE_THEMES 枚举内。
     4. data_x / data_y 必须是字符串（列名），不能是 list。
-    5. axes_y_min / axes_y_max 同时存在时 min < max。
+    5. style_palette_override 若存在，必须是 PALETTE_OVERRIDES 中的字符串，不能是颜色列表。
+    6. axes_y_min / axes_y_max 同时存在时 min < max。
 
     Returns:
         ValidationResult（ok=True 表示校验通过）。
@@ -90,7 +92,21 @@ def validate(spec: dict) -> ValidationResult:
         elif not isinstance(val_y, str):
             errors.append(f"data_y 应为字符串列名或字符串列表，收到类型：{type(val_y).__name__}")
 
-    # 规则 5：axes_y_min < axes_y_max
+    # 规则 5：style_palette_override 只能是注册的枚举字符串
+    palette_override = spec.get("style_palette_override")
+    if palette_override is not None:
+        if isinstance(palette_override, list):
+            errors.append(
+                f"style_palette_override 应为枚举字符串（如 'morandi'），"
+                f"不能是颜色列表。若要指定 line 图自定义颜色，请用 params_line_colors 字段。"
+                f"合法值：{PALETTE_OVERRIDES}"
+            )
+        elif palette_override not in PALETTE_OVERRIDES:
+            errors.append(
+                f"style_palette_override='{palette_override}' 不合法，合法值：{PALETTE_OVERRIDES}"
+            )
+
+    # 规则 6：axes_y_min < axes_y_max
     y_min = spec.get("axes_y_min")
     y_max = spec.get("axes_y_max")
     if y_min is not None and y_max is not None:

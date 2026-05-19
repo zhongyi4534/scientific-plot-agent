@@ -42,7 +42,6 @@ OPTIONAL_DEFAULTS: dict = {
     "label_title": "",
     "label_x": "",
     "label_y": "",
-    "axes_x_scale": "linear",
     "axes_y_scale": "linear",
     "axes_y_min": None,
     "axes_y_max": None,
@@ -57,7 +56,7 @@ OPTIONAL_DEFAULTS: dict = {
     "params_edgecolor": None,       # 柱子/纹理边框颜色，如 "white"/"black"；None=matplotlib默认
     "params_hatch_linewidth": 0.5,  # 纹理线宽；仅 params_hatch 不为 None 时生效
     # line 专属
-    "params_markers": True,
+    "params_show_markers": True,
     "params_smooth": False,
     "params_linestyle": "solid",    # 线型："solid"/"dashed"/"dotted"/"dashdot"；所有线统一
     "params_line_colors": None,     # 按线顺序的颜色列表，如 ["#E64B35","#4DBBD5"]；None=使用主题配色
@@ -72,7 +71,7 @@ OPTIONAL_DEFAULTS: dict = {
     "params_notch": False,
     # heatmap 专属
     "params_annot": True,
-    "params_fmt": ".2f",
+    "params_annot_fmt": ".2f",
 }
 
 # 每种图表类型对应的有效 params 字段
@@ -81,9 +80,9 @@ CHART_PARAMS: dict[str, list[str]] = {
         "params_orientation", "params_stacked", "params_sort", "params_show_values",
         "params_hatch", "params_edgecolor", "params_hatch_linewidth",
     ],
-    "line":    ["params_markers", "params_smooth", "params_linestyle", "params_line_colors",
+    "line":    ["params_show_markers", "params_smooth", "params_linestyle", "params_line_colors",
                 "params_marker_style", "params_marker_size"],
     "scatter": ["params_alpha", "params_show_regression", "params_marker_style", "params_marker_size"],
     "box":     ["params_show_points", "params_notch"],
-    "heatmap": ["params_annot", "params_fmt"],
+    "heatmap": ["params_annot", "params_annot_fmt"],
 }

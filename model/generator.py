@@ -35,15 +35,20 @@ _FEW_SHOT = """\
 用户需求：scatter图看模型参数量和准确率的关系，加回归线，vivid风格
 输出：{"chart_type":"scatter","data_source":"cache://c3d4e5f6","data_x":"param_size","data_y":"accuracy","style_theme":"vivid","data_group_by":"method","params_show_regression":true,"label_x":"参数量（M）","label_y":"准确率"}
 
-【示例4 修改轮 · 换风格】
+【示例4 首轮 · 折线图+自定义颜色】
+数据摘要：缓存key：cache://d4e5f6a7，列：method（类别型，唯一值6个）、dataset（类别型，唯一值4个）、accuracy（数值型）
+用户需求：折线图，X轴是model，按dataset分组画多条线，颜色依次用红#E64B35、蓝#4DBBD5、绿#00A087、深蓝#3C5488，clean风格
+输出：{"chart_type":"line","data_source":"cache://d4e5f6a7","data_x":"method","data_y":"accuracy","data_group_by":"dataset","style_theme":"clean","params_line_colors":["#E64B35","#4DBBD5","#00A087","#3C5488"],"label_x":"Model","label_y":"Accuracy (%)"}
+
+【示例5 修改轮 · 换风格】
 修改需求：换成ieee风格
 输出：{"style_theme":"ieee"}
 
-【示例5 修改轮 · 调整坐标轴】
+【示例6 修改轮 · 调整坐标轴】
 修改需求：Y轴从80开始，最高到100，X轴标签旋转45度
 输出：{"axes_y_min":80,"axes_y_max":100,"axes_x_tick_rotation":45}
 
-【示例6 修改轮 · 改图表属性】
+【示例7 修改轮 · 改图表属性】
 修改需求：改成横向柱状图，按数值从大到小排序
 输出：{"params_orientation":"horizontal","params_sort":"desc"}"""
 
@@ -73,16 +78,45 @@ _SYSTEM_FIRST = """\
 - axes_x_tick_rotation: X轴刻度旋转角度（如 45，默认0）
 - axes_y_scale: Y轴缩放，"linear"（默认）或 "log"
 
+【配色可选字段】（两个字段用途完全不同，不能混用）
+- style_palette_override: 切换预设配色方案，值只能是以下字符串之一：
+    "morandi"（莫兰迪低饱和）/ "nature_d"（Nature标志色）/ "tab10"（10色鲜艳）/ "coolwarm"（仅heatmap）
+  ⚠️ 不能填颜色列表，不能填十六进制颜色
+- params_line_colors: 【仅line图】自定义每条线的颜色，值为十六进制颜色字符串列表
+    示例：["#E64B35","#4DBBD5","#00A087","#3C5488"]
+  ⚠️ 这个字段只用于 line 图；bar/scatter/box 图改颜色只能用 style_palette_override
+
 【图表专属参数】
-bar图: params_orientation("vertical"默认/"horizontal") · params_stacked(true/false) · params_sort("asc"/"desc") · params_show_values(true/false)
-line图: params_markers(true/false) · params_smooth(true/false) · params_linestyle("solid"/"dashed"/"dotted"/"dashdot")
+bar图:
+  params_orientation("vertical"默认/"horizontal") · params_stacked(true/false)
+  params_sort("asc"/"desc"，按Y值大小排序柱子) · params_show_values(true/false，柱顶显示数值)
+  params_hatch(柱子纹理，如"/""\\""|""-""+"，null=不使用) · params_edgecolor(纹理边框色，如"white"/"black")
+
+line图:
+  params_show_markers(true/false，是否显示数据点标记，默认true)
+  params_marker_style(标记形状，"o"/"s"/"^"/"D"/"v"/"P"/"*"，null=默认"o")
+  params_marker_size(标记大小数值，如4) ← 注意：与 params_show_markers 是完全不同的字段
+  params_smooth(true/false) · params_linestyle("solid"/"dashed"/"dotted"/"dashdot")
+  params_line_colors(自定义颜色列表，见配色字段说明)
+
 scatter图: params_alpha(0~1) · params_show_regression(true/false)
-box图: params_show_points("all"/"outliers"/"none") · params_notch(true/false)
-heatmap: params_annot(true/false) · params_fmt(如".2f")
+  params_marker_style(标记形状) · params_marker_size(标记大小)
+
+box图:
+  params_show_points 取值是字符串，不是布尔值：
+    "all"=显示所有数据点 / "outliers"=仅显示离群点（默认） / "none"=不显示
+  params_notch(true/false，缺口箱线图)
+
+heatmap:
+  params_annot(true/false，是否在格子里显示数值，默认true)
+  params_annot_fmt(数值格式字符串，如".2f"保留两位小数，默认".2f")
 
 【输出规则】
 1. data_x、data_y 必须填数据摘要中出现的列名，不能填列的值
-2. 只输出 JSON，不要任何解释，不要 markdown 代码块"""
+2. style_palette_override 只能填预设名称字符串，绝对不能填颜色列表；line图自定义颜色用 params_line_colors
+3. params_show_markers 是布尔(true/false)，params_marker_style 是形状字符串，二者不能互换
+4. params_show_points 是字符串("all"/"outliers"/"none")，不是布尔值
+5. 只输出 JSON，不要任何解释，不要 markdown 代码块"""
 
 _SYSTEM_DELTA = """\
 你是一个科研绘图助手。根据修改需求，只返回需要变更的字段，格式为 JSON。
@@ -91,15 +125,20 @@ _SYSTEM_DELTA = """\
 数据: data_x · data_y · data_group_by · data_error · data_filter
 标签: label_title · label_x · label_y
 坐标轴: axes_y_min · axes_y_max · axes_x_tick_rotation · axes_y_scale
-风格: style_theme[clean/vivid/nature/ieee/morandi/dark] · style_palette_override
-bar参数: params_orientation · params_stacked · params_sort · params_show_values
-line参数: params_markers · params_smooth · params_linestyle
-scatter参数: params_alpha · params_show_regression
-box参数: params_show_points · params_notch
-heatmap参数: params_annot · params_fmt
+风格: style_theme[clean/vivid/nature/ieee/morandi/dark] · style_palette_override[morandi/nature_d/tab10/coolwarm，只能填这四个字符串之一]
+bar参数: params_orientation · params_stacked · params_sort(按Y值排序) · params_show_values · params_hatch · params_edgecolor
+line参数: params_show_markers(bool) · params_marker_style(形状字符串) · params_marker_size · params_smooth · params_linestyle · params_line_colors(颜色列表)
+scatter参数: params_alpha · params_show_regression · params_marker_style · params_marker_size
+box参数: params_show_points("all"/"outliers"/"none"，字符串非布尔) · params_notch
+heatmap参数: params_annot(bool) · params_annot_fmt(格式字符串，如".2f")
+坐标轴: axes_y_min · axes_y_max · axes_x_tick_rotation · axes_y_scale("linear"/"log")
 
 【输出规则】
-只返回用户要求改变的字段，其余字段不输出。只输出 JSON，不要解释，不要 markdown 代码块。"""
+1. 只返回用户要求改变的字段，其余字段不输出
+2. style_palette_override 只能填 morandi/nature_d/tab10/coolwarm 之一；line图自定义颜色用 params_line_colors
+3. params_show_markers 是布尔(true/false)，params_marker_style 是形状字符串，不能互换
+4. params_show_points 是字符串("all"/"outliers"/"none")，不是布尔值
+5. 只输出 JSON，不要解释，不要 markdown 代码块"""
 
 
 def _get_client() -> OpenAI:

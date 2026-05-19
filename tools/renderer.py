@@ -58,6 +58,16 @@ def _apply_axis_limits(
         ax.set_ylim(bottom=layout.y_min, top=layout.y_max)
 
 
+def _apply_axis_scales(ax: plt.Axes, spec: dict, horizontal: bool = False) -> None:
+    """应用坐标轴缩放（linear/log）。水平柱状图将 axes_y_scale 映射到 X 轴。"""
+    scale = spec.get("axes_y_scale", "linear")
+    if scale == "log":
+        if horizontal:
+            ax.set_xscale("log")
+        else:
+            ax.set_yscale("log")
+
+
 def _add_bar_values(
     ax: plt.Axes, bars, horizontal: bool, layout: LayoutParams
 ) -> None:
@@ -244,6 +254,7 @@ def _render_bar(
         _add_bar_values(ax=ax, bars=bars, horizontal=horizontal, layout=layout)
 
     _apply_axis_limits(ax, layout, horizontal)
+    _apply_axis_scales(ax, spec, horizontal)
     _apply_theme_to_fig(fig, ax, theme, layout)
     return fig
 
@@ -259,7 +270,7 @@ def _render_line(
     linestyle = spec.get("params_linestyle", "solid")
     line_colors = spec.get("params_line_colors")
     palette = line_colors if line_colors else theme.palette
-    use_markers = spec.get("params_markers", True)
+    use_markers = spec.get("params_show_markers", True)
     marker = (spec.get("params_marker_style") or "o") if use_markers else None
     smooth = spec.get("params_smooth", False)
 
@@ -303,6 +314,7 @@ def _render_line(
         ax.xaxis.set_major_locator(plt.MaxNLocator(layout.x_max_ticks))
 
     _apply_axis_limits(ax, layout)
+    _apply_axis_scales(ax, spec)
     _apply_theme_to_fig(fig, ax, theme, layout)
     return fig
 
@@ -344,6 +356,7 @@ def _render_scatter(
                 _draw_regression(gdf[x_col].values, gdf[y_col].values, color)
 
     _apply_axis_limits(ax, layout)
+    _apply_axis_scales(ax, spec)
     _apply_theme_to_fig(fig, ax, theme, layout)
     return fig
 
@@ -371,6 +384,7 @@ def _render_box(
                       size=layout.marker_size * 0.4, ax=ax)
 
     _apply_axis_limits(ax, layout)
+    _apply_axis_scales(ax, spec)
     _apply_theme_to_fig(fig, ax, theme, layout)
     return fig
 
@@ -397,7 +411,7 @@ def _render_heatmap(
 
     fig, ax = _prepare_axes(spec, theme, layout)
     sns.heatmap(pivot, annot=spec.get("params_annot", True),
-                fmt=spec.get("params_fmt", ".2f"),
+                fmt=spec.get("params_annot_fmt", ".2f"),
                 annot_kws={"size": layout.annot_fontsize},
                 cmap=cmap, linewidths=theme.line_width * 0.4, ax=ax)
 

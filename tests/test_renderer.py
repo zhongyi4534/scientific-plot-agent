@@ -22,7 +22,6 @@ MOCK_SPEC = {
     "label_title": "",
     "label_x": "",
     "label_y": "",
-    "axes_x_scale": "linear",
     "axes_y_scale": "linear",
     "axes_y_min": None,
     "axes_y_max": None,
