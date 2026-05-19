@@ -72,6 +72,25 @@ def on_submit(user_input: str) -> tuple[str | None, str, str]:
     # ──────────────────────────────────────────────────────────────
 
 
+def on_rerender(spec_json: str) -> tuple[str | None, str, str]:
+    """
+    重新渲染回调：用 spec_display 中的 JSON 直接渲染，跳过 LLM。
+
+    Returns:
+        (image_path_or_None, status_message, spec_json)
+    """
+    if not spec_json or not spec_json.strip():
+        return None, "PlotSpec 为空，请先生成图表", ""
+    response = agent.render_from_spec(spec_json)
+    spec_text = _spec_json(response.current_spec)
+    if response.status == "ok":
+        return response.image_path, "重新渲染完成", spec_text
+    elif response.status == "need_input":
+        return None, response.question or "", spec_text
+    else:
+        return None, f"[错误] {response.message}", spec_text
+
+
 def on_reset() -> tuple[None, str, str, str]:
     """重置按钮回调，清空所有状态。"""
     agent.reset()
@@ -126,12 +145,12 @@ with gr.Blocks(title="Scientific Plot Agent") as demo:
                 lines=3,
             )
 
-    # 底部：PlotSpec 展示 + 操作按钮
+    # 底部：PlotSpec 编辑区 + 操作按钮
     with gr.Row():
         spec_display = gr.Code(
-            label="当前 PlotSpec",
+            label="当前 PlotSpec（可直接编辑后点击「重新渲染」）",
             language="json",
-            interactive=False,
+            interactive=True,
         )
 
     with gr.Row():
@@ -148,6 +167,7 @@ with gr.Blocks(title="Scientific Plot Agent") as demo:
         #   export_btn = gr.DownloadButton(label="导出 PNG", value=lambda: current_image.value)
         #   # 或者用 .click 事件触发一个返回文件路径的函数
         # ──────────────────────────────────────────────────────────
+        rerender_btn = gr.Button("重新渲染", variant="primary")
         export_btn = gr.DownloadButton(label="导出 PNG", visible=True)
         reset_btn = gr.Button("重置", variant="secondary")
 
@@ -164,6 +184,12 @@ with gr.Blocks(title="Scientific Plot Agent") as demo:
     submit_btn.click(
         fn=on_submit,
         inputs=[user_input],
+        outputs=[image_output, status_box, spec_display],
+    )
+
+    rerender_btn.click(
+        fn=on_rerender,
+        inputs=[spec_display],
         outputs=[image_output, status_box, spec_display],
     )
 

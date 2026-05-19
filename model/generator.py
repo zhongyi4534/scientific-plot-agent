@@ -1,7 +1,131 @@
 """
 A线接口：generate_spec()
-当前为 Mock 实现，A线完成后替换函数体，接口签名不变。
+当前为 Plan B 实现（DeepSeek API），A线完成后替换函数体，接口签名不变。
 """
+
+import json
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+from openai import OpenAI
+
+load_dotenv(Path(__file__).parent.parent / ".env")
+
+
+_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+_DEEPSEEK_MODEL = "deepseek-chat"
+DEBUG = True  # True 时将原始 API 响应打印到终端，A线替换时可设为 False
+
+_CLIENT: OpenAI | None = None
+
+_FEW_SHOT = """\
+【示例1 首轮 · 柱状图分组+误差棒】
+数据摘要：缓存key：cache://a1b2c3d4，列：method（类别型）、dataset（类别型）、accuracy（数值型）、std（数值型）
+用户需求：画柱状图对比各模型在不同数据集上的准确率，nature风格，按数据集分组，加误差棒
+输出：{"chart_type":"bar","data_source":"cache://a1b2c3d4","data_x":"method","data_y":"accuracy","style_theme":"nature","data_group_by":"dataset","data_error":"std","label_title":"模型准确率对比","label_y":"Accuracy (%)"}
+
+【示例2 首轮 · 折线图多列Y】
+数据摘要：缓存key：cache://b2c3d4e5，列：epoch（数值型）、train_loss（数值型）、val_loss（数值型）
+用户需求：画训练曲线，同时展示train_loss和val_loss，clean风格，平滑一下
+输出：{"chart_type":"line","data_source":"cache://b2c3d4e5","data_x":"epoch","data_y":["train_loss","val_loss"],"style_theme":"clean","params_smooth":true,"label_title":"训练曲线","label_x":"Epoch","label_y":"Loss"}
+
+【示例3 首轮 · 散点图+回归线】
+数据摘要：缓存key：cache://c3d4e5f6，列：param_size（数值型）、accuracy（数值型）、method（类别型）
+用户需求：scatter图看模型参数量和准确率的关系，加回归线，vivid风格
+输出：{"chart_type":"scatter","data_source":"cache://c3d4e5f6","data_x":"param_size","data_y":"accuracy","style_theme":"vivid","data_group_by":"method","params_show_regression":true,"label_x":"参数量（M）","label_y":"准确率"}
+
+【示例4 修改轮 · 换风格】
+修改需求：换成ieee风格
+输出：{"style_theme":"ieee"}
+
+【示例5 修改轮 · 调整坐标轴】
+修改需求：Y轴从80开始，最高到100，X轴标签旋转45度
+输出：{"axes_y_min":80,"axes_y_max":100,"axes_x_tick_rotation":45}
+
+【示例6 修改轮 · 改图表属性】
+修改需求：改成横向柱状图，按数值从大到小排序
+输出：{"params_orientation":"horizontal","params_sort":"desc"}"""
+
+_SYSTEM_FIRST = """\
+你是一个科研绘图助手。根据用户需求和数据摘要，输出一个 PlotSpec JSON。
+
+【必填字段】
+- chart_type: 图表类型，从 [bar, line, scatter, box, heatmap] 中选
+- data_source: 数据摘要末尾"缓存key"的值（格式：cache://xxxxxxxx）
+- data_x: X轴列名（字符串，从数据摘要的列名中选）
+- data_y: Y轴列名字符串，或列名字符串列表（如需同时展示多列：["acc","f1"]）
+- style_theme: 视觉风格，从 [clean, vivid, nature, ieee, morandi, dark] 中选
+  · clean=简洁灰调  vivid=高饱和鲜艳  nature=Nature期刊风  ieee=IEEE论文风  morandi=莫兰迪低饱和  dark=深色背景
+
+【数据相关可选字段】
+- data_group_by: 分组列名（按类别绘制分组/堆叠图时使用）
+- data_error: 误差棒列名（数值型列，如std/sem）
+- data_filter: pandas query字符串，过滤数据行（如 "accuracy > 0.8"）
+
+【标签可选字段】
+- label_title: 图表标题
+- label_x: X轴标签
+- label_y: Y轴标签
+
+【坐标轴可选字段】
+- axes_y_min / axes_y_max: Y轴数值范围（如 axes_y_min=80）
+- axes_x_tick_rotation: X轴刻度旋转角度（如 45，默认0）
+- axes_y_scale: Y轴缩放，"linear"（默认）或 "log"
+
+【图表专属参数】
+bar图: params_orientation("vertical"默认/"horizontal") · params_stacked(true/false) · params_sort("asc"/"desc") · params_show_values(true/false)
+line图: params_markers(true/false) · params_smooth(true/false) · params_linestyle("solid"/"dashed"/"dotted"/"dashdot")
+scatter图: params_alpha(0~1) · params_show_regression(true/false)
+box图: params_show_points("all"/"outliers"/"none") · params_notch(true/false)
+heatmap: params_annot(true/false) · params_fmt(如".2f")
+
+【输出规则】
+1. data_x、data_y 必须填数据摘要中出现的列名，不能填列的值
+2. 只输出 JSON，不要任何解释，不要 markdown 代码块"""
+
+_SYSTEM_DELTA = """\
+你是一个科研绘图助手。根据修改需求，只返回需要变更的字段，格式为 JSON。
+
+【可修改的字段范围】
+数据: data_x · data_y · data_group_by · data_error · data_filter
+标签: label_title · label_x · label_y
+坐标轴: axes_y_min · axes_y_max · axes_x_tick_rotation · axes_y_scale
+风格: style_theme[clean/vivid/nature/ieee/morandi/dark] · style_palette_override
+bar参数: params_orientation · params_stacked · params_sort · params_show_values
+line参数: params_markers · params_smooth · params_linestyle
+scatter参数: params_alpha · params_show_regression
+box参数: params_show_points · params_notch
+heatmap参数: params_annot · params_fmt
+
+【输出规则】
+只返回用户要求改变的字段，其余字段不输出。只输出 JSON，不要解释，不要 markdown 代码块。"""
+
+
+def _get_client() -> OpenAI:
+    global _CLIENT
+    if _CLIENT is None:
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "未找到 DEEPSEEK_API_KEY 环境变量，请在终端中执行：\n"
+                "  $env:DEEPSEEK_API_KEY='your-api-key'  (PowerShell)\n"
+                "  export DEEPSEEK_API_KEY='your-api-key'  (bash)"
+            )
+        _CLIENT = OpenAI(api_key=api_key, base_url=_DEEPSEEK_BASE_URL)
+    return _CLIENT
+
+
+def _strip_markdown(text: str) -> str:
+    """去除模型可能输出的 markdown 代码块标记。"""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        lines = lines[1:]  # 去掉 ```json 或 ``` 开头行
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text
 
 
 def generate_spec(
@@ -22,166 +146,70 @@ def generate_spec(
         修改轮：仅包含变更字段的 delta dict。
         返回值已经过 JSON 解析，不是字符串。
     """
-    # Mock实现，A线替换
+    # Plan B 实现（DeepSeek API），A线替换
     # ============================================================
-    # A线实现指引
+    # A线实现指引（Plan B 完成后，A线按此替换函数体）
     # ============================================================
     #
-    # 【第一步】模块级加载模型（只加载一次，避免每次调用重新加载）
-    #
+    # 【第一步】模块级加载模型（只加载一次）
     #   from transformers import AutoTokenizer, AutoModelForCausalLM
     #   from peft import PeftModel
     #   import torch
+    #   _BASE_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+    #   _LORA_CKPT  = "path/to/your/lora/checkpoint"
+    #   _tokenizer  = AutoTokenizer.from_pretrained(_BASE_MODEL)
+    #   _model      = PeftModel.from_pretrained(
+    #                     AutoModelForCausalLM.from_pretrained(
+    #                         _BASE_MODEL, torch_dtype=torch.float16, device_map="auto"
+    #                     ), _LORA_CKPT
+    #                 ).eval()
     #
-    #   _BASE_MODEL  = "Qwen/Qwen2.5-1.5B-Instruct"
-    #   _LORA_CKPT   = "path/to/your/lora/checkpoint"   # LoRA 训练产出路径
+    # 【第二步】构造 prompt（格式与 _FEW_SHOT/_SYSTEM_FIRST/_SYSTEM_DELTA 一致）
     #
-    #   _tokenizer = AutoTokenizer.from_pretrained(_BASE_MODEL)
-    #   _base_model = AutoModelForCausalLM.from_pretrained(
-    #       _BASE_MODEL, torch_dtype=torch.float16, device_map="auto"
-    #   )
-    #   _model = PeftModel.from_pretrained(_base_model, _LORA_CKPT)
-    #   _model.eval()
-    #
-    # ────────────────────────────────────────────────────────────
-    # 【第二步】构造 prompt
-    #
-    #   首轮 prompt（current_spec is None）格式：
-    #   ┌──────────────────────────────────────────────────────┐
-    #   │ 你是一个科研绘图助手。根据以下数据摘要和用户需求，  │
-    #   │ 输出一个 PlotSpec JSON。只输出 JSON，不要解释。      │
-    #   │                                                      │
-    #   │ {data_context}                                       │
-    #   │                                                      │
-    #   │ 用户需求：{user_input}                               │
-    #   └──────────────────────────────────────────────────────┘
-    #
-    #   修改轮 prompt（current_spec is not None）格式：
-    #   ┌──────────────────────────────────────────────────────┐
-    #   │ 你是一个科研绘图助手。下面是当前图表配置和用户的     │
-    #   │ 修改需求。只返回需要变更的字段，格式为 JSON。        │
-    #   │                                                      │
-    #   │ {data_context}                                       │
-    #   │                                                      │
-    #   │ 当前配置：{json.dumps(current_spec, ensure_ascii=False)} │
-    #   │                                                      │
-    #   │ 修改需求：{user_input}                               │
-    #   └──────────────────────────────────────────────────────┘
-    #
-    #   示例代码：
-    #
-    #   import json
-    #   if current_spec is None:
-    #       prompt = (
-    #           "你是一个科研绘图助手。根据以下数据摘要和用户需求，"
-    #           "输出一个 PlotSpec JSON。只输出 JSON，不要解释。\n\n"
-    #           f"{data_context}\n\n"
-    #           f"用户需求：{user_input}"
-    #       )
-    #   else:
-    #       prompt = (
-    #           "你是一个科研绘图助手。下面是当前图表配置和用户的修改需求。"
-    #           "只返回需要变更的字段，格式为 JSON。\n\n"
-    #           f"{data_context}\n\n"
-    #           f"当前配置：{json.dumps(current_spec, ensure_ascii=False)}\n\n"
-    #           f"修改需求：{user_input}"
-    #       )
-    #
-    # ────────────────────────────────────────────────────────────
-    # 【第三步】用 outlines 做 constrained decoding（保证输出合法 JSON）
-    #
+    # 【第三步】用 outlines 做 constrained decoding 保证合法 JSON
     #   import outlines
-    #   from schema import CHART_TYPES, STYLE_THEMES
-    #
-    #   # 首轮：约束输出必须包含所有必填字段
-    #   FULL_SPEC_SCHEMA = {
-    #       "type": "object",
-    #       "properties": {
-    #           "chart_type":  {"type": "string", "enum": CHART_TYPES},
-    #           "data_source": {"type": "string"},
-    #           "data_x":      {"type": "string"},   # 列名字符串，不是列的值！
-    #           "data_y":      {"type": "string"},   # 列名字符串，不是列的值！
-    #           "style_theme": {"type": "string", "enum": STYLE_THEMES},
-    #       },
-    #       "required": ["chart_type", "data_source", "data_x", "data_y", "style_theme"],
-    #   }
-    #
-    #   # 修改轮：约束输出为任意 object（字段不定，只要是 JSON object 即可）
-    #   DELTA_SCHEMA = {"type": "object"}
-    #
+    #   FULL_SPEC_SCHEMA = {"type":"object","properties":{...},"required":[...]}
+    #   DELTA_SCHEMA = {"type":"object"}
     #   schema = FULL_SPEC_SCHEMA if current_spec is None else DELTA_SCHEMA
     #   generator = outlines.generate.json(_model, schema)
-    #   result_str = generator(prompt)
-    #   return json.loads(result_str)
-    #
-    # ────────────────────────────────────────────────────────────
-    # 【Plan B：若训练效果不理想，改用 few-shot prompt 调 Claude API】
-    #
-    #   只需替换本函数体，其余文件一行不动。
-    #
-    #   import anthropic, json
-    #
-    #   FEW_SHOT = """
-    #   示例1（首轮）：
-    #   数据：method列（类别型）、accuracy列（数值型）
-    #   需求：画柱状图对比各模型准确率，nature风格
-    #   输出：{"chart_type":"bar","data_source":"data/example_bar.csv",
-    #           "data_x":"method","data_y":"accuracy","style_theme":"nature"}
-    #
-    #   示例2（修改轮）：
-    #   需求：换成ieee风格
-    #   输出：{"style_theme":"ieee"}
-    #   """
-    #
-    #   client = anthropic.Anthropic()
-    #   if current_spec is None:
-    #       user_msg = f"{FEW_SHOT}\n数据摘要：{data_context}\n需求：{user_input}\n输出："
-    #   else:
-    #       user_msg = (f"{FEW_SHOT}\n当前配置：{json.dumps(current_spec)}\n"
-    #                   f"修改需求：{user_input}\n输出（只返回变更字段）：")
-    #
-    #   resp = client.messages.create(
-    #       model="claude-haiku-4-5-20251001",
-    #       max_tokens=512,
-    #       messages=[{"role": "user", "content": user_msg}],
-    #   )
-    #   return json.loads(resp.content[0].text)
-    #
-    # ────────────────────────────────────────────────────────────
-    # 【返回值约定（无论用哪种实现都必须满足）】
-    #
-    #   首轮（current_spec is None），返回包含所有必填字段的完整 dict，例如：
-    #     {
-    #       "chart_type":  "bar",                    # CHART_TYPES 中的值
-    #       "data_source": "data/example_bar.csv",
-    #       "data_x":      "method",                 # ✅ 列名字符串
-    #       "data_y":      "accuracy",               # ✅ 列名字符串
-    #       "style_theme": "nature",                 # STYLE_THEMES 中的值
-    #       # 可选字段按需返回，不填由 merger.fill_defaults() 自动补充
-    #       "label_title": "模型准确率对比",
-    #       "data_group_by": "dataset",
-    #     }
-    #
-    #   修改轮（current_spec is not None），只返回变更字段，例如：
-    #     {"style_theme": "ieee"}
-    #     {"axes_y_min": 50, "axes_y_max": 100}
-    #     {"data_group_by": "dataset", "label_title": "分组对比"}
-    #
-    #   ⚠️  返回值必须是 dict，不能是 JSON 字符串
-    #   ⚠️  data_x / data_y 填列名（如 "accuracy"），不要填列的值（如 [93.5, 94.8]）
+    #   return json.loads(generator(prompt))
     # ============================================================
 
+    client = _get_client()
+
     if current_spec is None:
-        # 首轮 Mock：返回完整示例 PlotSpec
-        return {
-            "chart_type": "bar",
-            "data_source": "data/example_bar.csv",
-            "data_x": "method",
-            "data_y": "accuracy",
-            "style_theme": "nature",
-        }
+        system_msg = _SYSTEM_FIRST
+        user_msg = (
+            f"{_FEW_SHOT}\n\n"
+            f"数据摘要：\n{data_context}\n\n"
+            f"用户需求：{user_input}\n"
+            "输出："
+        )
     else:
-        # 修改轮 Mock：只返回变更字段
-        return {
-            "style_theme": "ieee",
-        }
+        system_msg = _SYSTEM_DELTA
+        user_msg = (
+            f"{_FEW_SHOT}\n\n"
+            f"数据摘要：\n{data_context}\n\n"
+            f"当前配置：{json.dumps(current_spec, ensure_ascii=False)}\n\n"
+            f"修改需求：{user_input}\n"
+            "输出："
+        )
+
+    resp = client.chat.completions.create(
+        model=_DEEPSEEK_MODEL,
+        max_tokens=512,
+        temperature=0.1,
+        messages=[
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ],
+    )
+
+    raw_text = resp.choices[0].message.content
+    if DEBUG:
+        round_label = "首轮" if current_spec is None else "修改轮"
+        print(f"\n{'='*50}")
+        print(f"[DeepSeek {round_label}] 用户输入: {user_input}")
+        print(f"[DeepSeek 原始响应]:\n{raw_text}")
+        print(f"{'='*50}\n")
+    return json.loads(_strip_markdown(raw_text))

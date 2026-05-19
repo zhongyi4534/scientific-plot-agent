@@ -5,6 +5,7 @@ C线核心：PlotAgent 主循环
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from model.generator import generate_spec
@@ -132,6 +133,52 @@ class PlotAgent:
                 current_spec=full_spec,
             )
 
+        return AgentResponse(
+            status="ok",
+            image_path=image_path,
+            current_spec=full_spec,
+        )
+
+    def render_from_spec(self, spec_json: str) -> AgentResponse:
+        """
+        用手动编辑的 PlotSpec JSON 字符串直接渲染，跳过 generate_spec 步骤。
+        渲染成功后同步更新 current_spec，后续 LLM 轮次的 delta 以此为基础。
+
+        Args:
+            spec_json: 用户在 UI 中手动编辑的 PlotSpec JSON 字符串。
+
+        Returns:
+            AgentResponse dataclass。
+        """
+        try:
+            spec = json.loads(spec_json)
+        except json.JSONDecodeError as exc:
+            return AgentResponse(
+                status="error",
+                message=f"JSON 格式错误：{exc}",
+                current_spec=self.current_spec,
+            )
+
+        full_spec = fill_defaults(spec)
+        result = validate(full_spec)
+        if not result.ok:
+            return AgentResponse(
+                status="need_input",
+                question=result.prompt,
+                current_spec=spec,
+            )
+
+        effective_source = self.current_cache_key or full_spec.get("data_source", "")
+        try:
+            image_path = render_plot(full_spec, effective_source)
+        except (RenderError, Exception) as exc:
+            return AgentResponse(
+                status="error",
+                message=f"渲染失败：{exc}",
+                current_spec=full_spec,
+            )
+
+        self.current_spec = full_spec
         return AgentResponse(
             status="ok",
             image_path=image_path,
