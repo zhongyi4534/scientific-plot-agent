@@ -13,7 +13,8 @@ scientific-plot-agent/
 │   └── generator.py       # A线：generate_spec()，当前为 Plan B（DeepSeek API）
 ├── tools/
 │   ├── loader.py          # B线：DataLoader，CSV 解析 + 数据摘要
-│   ├── themes.py          # B线：ThemeConfig + THEMES/PALETTES 注册表
+│   ├── themes.py          # B线：ThemeConfig 静态风格注册表
+│   ├── layout.py          # B线：LayoutEngine，数据驱动的动态布局计算
 │   └── renderer.py        # B线：PlotRenderer，5 种图表类型完整实现
 ├── system/
 │   ├── validator.py       # C线：PlotSpec 合法性校验
@@ -90,7 +91,7 @@ def generate_spec(
 def render_plot(spec: dict, data_source: str) -> str: ...
 ```
 
-通过 `tools/themes.py` 的 `apply_theme()` 获取 `ThemeConfig`，按 spec 参数渲染对应图表，输出 PNG 到 `output/` 目录。
+通过 `tools/themes.py` 的 `apply_theme()` 获取静态 `ThemeConfig`（风格），再由 `tools/layout.py` 的 `compute_layout()` 根据数据规模计算动态 `LayoutParams`（尺寸/图例/刻度旋转），最后按 spec 参数渲染对应图表，输出 PNG 到 `output/` 目录。
 
 ### C线（`system/agent.py` + `ui/app.py`）
 

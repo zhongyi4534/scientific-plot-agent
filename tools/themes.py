@@ -5,7 +5,8 @@ B线工具：主题与调色板注册表。
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import dataclasses
+from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 
@@ -14,19 +15,18 @@ from schema import STYLE_THEMES, PALETTE_OVERRIDES
 
 @dataclass
 class ThemeConfig:
-    """单个主题的完整排版与配色配置。"""
+    """单个主题的完整排版与配色配置（静态，数据无关）。"""
 
     font_family: str
-    font_size: int
+    font_size: int          # 标准图幅下的基准字号（磅），LayoutEngine 按图幅缩放后得实际字号
     line_width: float
-    figure_width: float
-    figure_height: float
+    figure_width: float     # 最小基准图幅宽度（英寸），LayoutEngine 只扩大不缩小
+    aspect_ratio: float     # 宽高比：figure_height = figure_width × aspect_ratio
     dpi: int
     spines: list[str]
     grid: bool
     grid_style: str
     legend_frameon: bool
-    legend_fontsize: int
     palette: list[str]
     bg_color: str = "white"    # 背景色；dark 主题使用深色
     text_color: str = "black"  # 文字/刻度/轴脊颜色；dark 主题使用浅色
@@ -51,13 +51,12 @@ THEMES: dict[str, ThemeConfig] = {
         font_size=7,
         line_width=0.75,
         figure_width=3.5,
-        figure_height=2.625,
+        aspect_ratio=0.75,      # 原 3.5 × 2.625
         dpi=300,
         spines=["left", "bottom"],
         grid=False,
         grid_style="--",
         legend_frameon=False,
-        legend_fontsize=6,
         palette=["#E64B35", "#4DBBD5", "#00A087", "#3C5488", "#F39B7F", "#8491B4", "#91D1C2"],
     ),
     "ieee": ThemeConfig(
@@ -65,13 +64,12 @@ THEMES: dict[str, ThemeConfig] = {
         font_size=8,
         line_width=0.5,
         figure_width=3.5,
-        figure_height=2.625,
+        aspect_ratio=0.75,      # 原 3.5 × 2.625
         dpi=300,
         spines=["left", "bottom"],
         grid=True,
         grid_style="--",
         legend_frameon=False,
-        legend_fontsize=7,
         palette=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2"],
     ),
     "vivid": ThemeConfig(
@@ -79,13 +77,12 @@ THEMES: dict[str, ThemeConfig] = {
         font_size=10,
         line_width=1.5,
         figure_width=6.0,
-        figure_height=4.0,
+        aspect_ratio=0.667,     # 原 6.0 × 4.0
         dpi=150,
         spines=["left", "bottom"],
         grid=True,
         grid_style="--",
         legend_frameon=True,
-        legend_fontsize=9,
         palette=["#E63946", "#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#00BCD4", "#FF5722"],
     ),
     "morandi": ThemeConfig(
@@ -93,13 +90,12 @@ THEMES: dict[str, ThemeConfig] = {
         font_size=9,
         line_width=1.0,
         figure_width=5.0,
-        figure_height=3.75,
+        aspect_ratio=0.75,      # 原 5.0 × 3.75
         dpi=150,
         spines=["left", "bottom"],
         grid=False,
         grid_style="--",
         legend_frameon=False,
-        legend_fontsize=8,
         palette=["#8B9BAB", "#C4A882", "#9CAF88", "#B89BAD", "#A89888", "#C4B8A8", "#88A0A8"],
     ),
     "clean": ThemeConfig(
@@ -107,13 +103,12 @@ THEMES: dict[str, ThemeConfig] = {
         font_size=10,
         line_width=1.0,
         figure_width=6.0,
-        figure_height=4.0,
+        aspect_ratio=0.667,     # 原 6.0 × 4.0
         dpi=150,
         spines=["left", "bottom"],
         grid=False,
         grid_style="--",
         legend_frameon=True,
-        legend_fontsize=9,
         palette=["#5C85A4", "#A4785C", "#7AA45C", "#A45C7A", "#7C5CA4", "#5CA48C", "#A4A45C"],
     ),
     "dark": ThemeConfig(
@@ -121,13 +116,12 @@ THEMES: dict[str, ThemeConfig] = {
         font_size=11,
         line_width=1.5,
         figure_width=7.0,
-        figure_height=4.5,
+        aspect_ratio=0.667,     # 原 7.0 × 4.5，按设计规范取 0.667
         dpi=150,
         spines=["left", "bottom"],
         grid=True,
         grid_style="--",
         legend_frameon=True,
-        legend_fontsize=10,
         palette=["#61DAFB", "#F7B731", "#A3E635", "#FB7185", "#C084FC", "#34D399", "#F97316"],
         bg_color="#1e1e2e",
         text_color="#cdd6f4",
@@ -166,7 +160,7 @@ def apply_theme(
     base = THEMES[theme_name]
 
     if palette_override is None:
-        return ThemeConfig(**base.__dict__)
+        return dataclasses.replace(base)
 
     if palette_override not in PALETTE_OVERRIDES:
         raise ValueError(f"未知配色覆盖：{palette_override}，合法值：{PALETTE_OVERRIDES}")
@@ -175,19 +169,4 @@ def apply_theme(
     # coolwarm 是字符串（heatmap 专用），不能直接赋给 palette list
     new_palette = override_palette if isinstance(override_palette, list) else base.palette
 
-    return ThemeConfig(
-        font_family=base.font_family,
-        font_size=base.font_size,
-        line_width=base.line_width,
-        figure_width=base.figure_width,
-        figure_height=base.figure_height,
-        dpi=base.dpi,
-        spines=base.spines,
-        grid=base.grid,
-        grid_style=base.grid_style,
-        legend_frameon=base.legend_frameon,
-        legend_fontsize=base.legend_fontsize,
-        palette=new_palette,
-        bg_color=base.bg_color,
-        text_color=base.text_color,
-    )
+    return dataclasses.replace(base, palette=new_palette)
