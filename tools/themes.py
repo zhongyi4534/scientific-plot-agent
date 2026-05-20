@@ -49,7 +49,7 @@ def _tab10_colors() -> list[str]:
 
 
 THEMES: dict[str, ThemeConfig] = {
-    "nature": ThemeConfig(
+    "normal": ThemeConfig(
         font_family="Arial",
         font_size=7,
         line_width=0.75,
@@ -62,73 +62,127 @@ THEMES: dict[str, ThemeConfig] = {
         legend_frameon=False,
         palette=["#E64B35", "#4DBBD5", "#00A087", "#3C5488", "#F39B7F", "#8491B4", "#91D1C2"],
     ),
-    "ieee": ThemeConfig(
-        font_family="Times New Roman",
-        font_size=8,
-        line_width=0.5,
-        figure_width=3.5,
-        aspect_ratio=0.75,      # 原 3.5 × 2.625
-        dpi=300,
-        spines=["left", "bottom"],
-        grid=True,
-        grid_style="--",
-        legend_frameon=False,
-        palette=["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2"],
-    ),
-    "vivid": ThemeConfig(
-        font_family="DejaVu Sans",
-        font_size=10,
-        line_width=1.5,
-        figure_width=6.0,
-        aspect_ratio=0.667,     # 原 6.0 × 4.0
-        dpi=150,
-        spines=["left", "bottom"],
-        grid=True,
-        grid_style="--",
-        legend_frameon=True,
-        palette=["#E63946", "#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#00BCD4", "#FF5722"],
-    ),
+
+ 
     "morandi": ThemeConfig(
         font_family="Arial",
-        font_size=9,
-        line_width=1.0,
+        font_size=9,                 # IEEE/CVPR 推荐 9-10 pt
+        line_width=0.8,
+        figure_width=6.0,            # 适度放宽以适应双栏/宽屏展示
+        aspect_ratio=0.667,          # 6 × 4 英寸，比原配置稍扁
+        dpi=300,
+        spines=["left", "bottom"],   # 仅保留左、下轴脊
+        grid=False,                  # 必须为 False（CVPR 及 IEEE 倾向无网格）
+        grid_style="--",
+        legend_frameon=False,
+        palette=["#E36E5D", "#E9B198", "#F4C756", "#9EC4BE", "#4D9D95", "#FBE8D5", "#ABD0F1", "#DCE9F4"],
+        bg_color="#FFFFFF",
+        text_color="#333333",
+        hatch=["/", "\\"],           # 交错斜线纹理（bar图生效）
+        edgecolor="#FFFFFF",
+        hatch_linewidth=0.6,
+    ),
+
+    "macaron": ThemeConfig(
+        font_family="Arial",
+        font_size=11,
+        line_width=1.2,
         figure_width=5.0,
-        aspect_ratio=0.75,      # 原 5.0 × 3.75
-        dpi=150,
+        aspect_ratio=0.8,
+        dpi=300,
+        spines=["top", "bottom", "left", "right"],
+        grid=True,
+        grid_style=":",
+        legend_frameon=True,
+        palette=["#FEDEE1", "#FFDCA4", "#FBEDCA", "#CFEADC", "#B1E0E9", "#B7E0FF"],
+        bg_color="#FDFBF7",
+        text_color="#4A3B32",
+    ),
+
+    "bright": ThemeConfig(
+        font_family="Times New Roman",
+        font_size=12,
+        line_width=1.5,
+        figure_width=6.0,
+        aspect_ratio=4.5 / 6.0,        # = 0.75
+        dpi=300,
         spines=["left", "bottom"],
         grid=False,
         grid_style="--",
         legend_frameon=False,
-        palette=["#8B9BAB", "#C4A882", "#9CAF88", "#B89BAD", "#A89888", "#C4B8A8", "#88A0A8"],
+        palette=["#EFD55E", "#F77A82", "#89D0C2", "#077ABD", "#B7AACB",  "#535252"],
+        bg_color="#FFFFFF",
+        text_color="#000000",
     ),
-    "clean": ThemeConfig(
-        font_family="DejaVu Sans",
+
+
+    # 洛可可：柔和浅色 + 金边（沿用一般图幅）
+    "rococo": ThemeConfig(
+        font_family="Arial",
         font_size=10,
-        line_width=1.0,
-        figure_width=6.0,
-        aspect_ratio=0.667,     # 原 6.0 × 4.0
-        dpi=150,
+        line_width=0.9,
+        figure_width=5.5,
+        aspect_ratio=0.75,           # 4:3
+        dpi=300,
         spines=["left", "bottom"],
         grid=False,
         grid_style="--",
         legend_frameon=True,
-        palette=["#5C85A4", "#A4785C", "#7AA45C", "#A45C7A", "#7C5CA4", "#5CA48C", "#A4A45C"],
+        palette=["#D48390", "#AAABAF", "#C6463B", "#8EB07A", "#B4CFD4", "#758BA0"],
+        bg_color="#FFFFFF",
+        text_color="#3E3A39",
     ),
-    "dark": ThemeConfig(
-        font_family="DejaVu Sans",
-        font_size=11,
-        line_width=1.5,
-        figure_width=7.0,
-        aspect_ratio=0.667,     # 原 7.0 × 4.5，按设计规范取 0.667
-        dpi=150,
+
+    # 大地色系：浓郁矿物色
+    "earth": ThemeConfig(
+        font_family="Times New Roman",
+        font_size=9,
+        line_width=0.8,
+        figure_width=5.0,
+        aspect_ratio=0.75,
+        dpi=300,
         spines=["left", "bottom"],
-        grid=True,
+        grid=False,                      # 避免现代感网格，保持古朴素净
         grid_style="--",
-        legend_frameon=True,
-        palette=["#61DAFB", "#F7B731", "#A3E635", "#FB7185", "#C084FC", "#34D399", "#F97316"],
-        bg_color="#1e1e2e",
-        text_color="#cdd6f4",
+        legend_frameon=False,
+        palette=["#B6A27A", "#A35648", "#A8CFD0", "#4A6A5C", "#6998B9", "#E9D4Af"],  # 大地色为主
+        bg_color="#FDF6E3",              # 米黄/羊皮纸色，复古质感
+        text_color="#2C2B28",
     ),
+
+    "science": ThemeConfig(
+        font_family="Times New Roman",   # AAAS 官方偏好
+        font_size=8,                     # 对应 Nature 的「中等字号」
+        line_width=0.7,
+        figure_width=5.0,
+        aspect_ratio=0.75,
+        dpi=300,
+        spines=["left", "bottom"],
+        grid=False,                      # Science 图表通常无背景网格
+        grid_style="--",
+        legend_frameon=False,
+        palette=["#0D497F", "#4193C5", "#6AADD7", "#9DCAE1", "#E0EAF6"],
+        bg_color="#FFFFFF",
+        text_color="#111111",
+    ),
+
+    "nature": ThemeConfig(
+        font_family="Arial",             # Nature 强制 Arial/Helvetica
+        font_size=7,                     # 严格符合 Nature 规定
+        line_width=0.75,
+        figure_width=4.0,
+        aspect_ratio=0.75,
+        dpi=300,
+        spines=["left", "bottom"],
+        grid=False,                      # 必须 False（Nature 禁止背景网格）
+        grid_style="--",
+        legend_frameon=False,
+        palette=["#F7C651", "#EAAEB1", "#F74043", "#75717C", "#F69A29", "#5A7892", "#44A98B"],
+        bg_color="#FFFFFF",
+        text_color="#222222",
+    ),
+
+
 }
 
 # 配色覆盖注册表；"coolwarm" 是字符串，供 heatmap cmap 参数使用
