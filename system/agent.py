@@ -41,6 +41,7 @@ class PlotAgent:
         self.current_spec: dict | None = None
         self.current_cache_key: str | None = None
         self.data_context: str | None = None
+        self.pending_user_input: str | None = None  # ask_user 触发时暂存原始请求
 
     def load_data(self, source: str) -> str:
         """
@@ -93,15 +94,31 @@ class PlotAgent:
         #    if not user_input.strip():
         #        return AgentResponse(status="need_input", question="请输入绘图需求。")
         # ──────────────────────────────────────────────────────────
+        # 若 ask_user 已触发过，将原始请求与用户补充合并后再推理
+        if self.pending_user_input is not None:
+            effective_input = f"{self.pending_user_input}（补充信息：{user_input}）"
+            self.pending_user_input = None
+        else:
+            effective_input = user_input
+
         data_context = self.data_context or ""
         data_source = self.current_cache_key or ""
 
         try:
-            raw = generate_spec(user_input, data_context, self.current_spec)
+            raw = generate_spec(effective_input, data_context, self.current_spec)
         except Exception as exc:
             return AgentResponse(
                 status="error",
                 message=f"模型推理失败：{exc}",
+                current_spec=self.current_spec,
+            )
+
+        # ask_user 工具：模型主动要求澄清，暂存当前有效输入等待用户回答
+        if raw.get("__ask_user__"):
+            self.pending_user_input = effective_input
+            return AgentResponse(
+                status="need_input",
+                question=raw["question"],
                 current_spec=self.current_spec,
             )
 
@@ -217,3 +234,4 @@ class PlotAgent:
         self.current_spec = None
         self.current_cache_key = None
         self.data_context = None
+        self.pending_user_input = None

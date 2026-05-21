@@ -126,8 +126,13 @@ SYSTEM_FIRST_FINETUNE: str = f"""\
 4. style_palette_override 只能填预设名称字符串，绝对不能填颜色列表；line图自定义颜色用 params_line_colors
 5. params_show_markers 是布尔(true/false)，params_marker_style 是形状字符串，二者不能互换
 6. params_show_points 是字符串("all"/"outliers"/"none")，不是布尔值
-7. 输出格式必须是以下工具调用结构，不要任何解释，不要 markdown 代码块：
-   {"tool":"create_plot","arguments":{...字段...}}"""
+7. 根据情况选择以下两种工具调用之一输出，不要任何解释，不要 markdown 代码块：
+   · 信息充足时：{"tool":"create_plot","arguments":{...字段...}}
+   · 无法确定 data_x 或 data_y 应填哪个列名时（仅此情况）：
+     {"tool":"ask_user","arguments":{"question":"..."}}
+     问题中必须列出数据摘要中的可用列名并给出建议，例如：
+     "请问您想展示哪个指标？可选：accuracy / f1 / recall（建议 accuracy）"
+     ⚠️ 其他情况（chart_type/style_theme 不确定等）不要调用 ask_user，直接选合理默认值"""
 
 
 # ── 修改轮系统提示词 ───────────────────────────────────────────────────────────
@@ -144,8 +149,12 @@ SYSTEM_DELTA_FINETUNE: str = f"""\
 4. style_palette_override 只能填预设名称字符串，不能填颜色列表
 5. params_show_markers 是布尔(true/false)，params_marker_style 是形状字符串，二者不能互换
 6. params_show_points 是字符串("all"/"outliers"/"none")，不是布尔值
-7. 输出格式必须是以下工具调用结构，不要任何解释，不要 markdown 代码块：
-   {"tool":"update_plot","arguments":{...变更字段...}}"""
+7. 根据情况选择以下两种工具调用之一输出，不要任何解释，不要 markdown 代码块：
+   · 修改意图明确时：{"tool":"update_plot","arguments":{...变更字段...}}
+   · 无法确定用户要修改 data_x 或 data_y 为哪个列名时（仅此情况）：
+     {"tool":"ask_user","arguments":{"question":"..."}}
+     问题中必须列出数据摘要中的可用列名并给出建议
+     ⚠️ 其他不确定情况保持当前字段不变，不要调用 ask_user"""
 
 
 def format_user_message(user_input: str, data_context: str) -> str:

@@ -147,9 +147,15 @@ def generate_spec(
     # 从工具调用包装结构中提取 arguments
     if "tool" in parsed and "arguments" in parsed:
         tool_name = parsed["tool"]
-        result = parsed["arguments"]
         if DEBUG:
             print(f"[A线] tool={tool_name}")
+        if tool_name == "ask_user":
+            # 返回特殊标记 dict，由 agent.py 识别并路由，不进入渲染流程
+            return {
+                "__ask_user__": True,
+                "question": parsed["arguments"].get("question", "请补充更多信息"),
+            }
+        result = parsed["arguments"]
     else:
         # 兼容旧格式（裸 PlotSpec），避免格式迁移期间推理完全失败
         result = parsed

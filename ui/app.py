@@ -72,7 +72,10 @@ def on_submit(user_input: str, fmt: str) -> tuple[str | None, str, str]:
     if response.status == "ok":
         return _image_and_status(response.image_path, "绘图完成") + (spec_text,)
     elif response.status == "need_input":
-        return None, response.question or "", spec_text
+        question = response.question or ""
+        # ask_user 触发时（agent 有 pending 输入），提示用户在输入框回复
+        prefix = "需要确认（请在输入框回复）：\n" if agent.pending_user_input else ""
+        return None, prefix + question, spec_text
     else:
         return None, f"[错误] {response.message}", spec_text
 
