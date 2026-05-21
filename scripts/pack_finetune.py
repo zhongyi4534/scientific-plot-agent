@@ -55,8 +55,10 @@ from model.prompts import (
 )
 
 _SYSTEM_MAP: dict[str, str] = {
-    "first": SYSTEM_FIRST_FINETUNE,
-    "delta": SYSTEM_DELTA_FINETUNE,
+    "first":     SYSTEM_FIRST_FINETUNE,
+    "delta":     SYSTEM_DELTA_FINETUNE,
+    "ask_first": SYSTEM_FIRST_FINETUNE,   # ask_user 首轮：系统提示与 first 相同
+    "ask_delta": SYSTEM_DELTA_FINETUNE,   # ask_user 修改轮：系统提示与 delta 相同
 }
 
 # ---------------------------------------------------------------------------
@@ -67,8 +69,9 @@ PAIRS_DIR    = Path("data/pairs")
 FINETUNE_DIR = Path("data/finetune")
 FINETUNE_DIR.mkdir(parents=True, exist_ok=True)
 
-VALID_PAIRS_PATH = PAIRS_DIR / "valid_pairs.jsonl"
-DELTA_PAIRS_PATH = PAIRS_DIR / "delta_pairs.jsonl"
+VALID_PAIRS_PATH  = PAIRS_DIR / "valid_pairs.jsonl"
+DELTA_PAIRS_PATH  = PAIRS_DIR / "delta_pairs.jsonl"
+MANUAL_PAIRS_PATH = PAIRS_DIR / "manual_pairs.jsonl"
 TRAIN_PATH = FINETUNE_DIR / "train.jsonl"
 VAL_PATH   = FINETUNE_DIR / "val.jsonl"
 
@@ -94,28 +97,40 @@ def build_messages(
     使不同类型的记录（首轮/修改轮）各自携带正确的提示词，无需训练时统一注入。
 
     assistant message 使用工具调用格式：
-        首轮：{"tool":"create_plot","arguments":{...完整 PlotSpec...}}
-        修改轮：{"tool":"update_plot","arguments":{...delta 字段...}}
+        首轮：      {"tool":"create_plot","arguments":{...完整 PlotSpec...}}
+        修改轮：    {"tool":"update_plot","arguments":{...delta 字段...}}
+        ask_first： {"tool":"ask_user","arguments":{"question":"..."}}
+        ask_delta： {"tool":"ask_user","arguments":{"question":"..."}}
 
     Args:
         user_input:   用户请求（首轮或修改请求）。
         data_context: 数据摘要字符串（由 tools.loader._build_context 生成）。
-        plotspec:     首轮为完整 PlotSpec dict，修改轮为 delta dict（均不含 data_source）。
-        record_type:  "first"=首轮（默认），"delta"=修改轮。
-        current_spec: 修改轮专用，当前生效的完整 PlotSpec dict（不含 data_source）。
-                      record_type="first" 时忽略此参数。
+        plotspec:     first/ask_first 为完整 PlotSpec 或 {"question":"..."}；
+                      delta/ask_delta 为 delta dict 或 {"question":"..."}。
+                      均不含 data_source 字段。
+        record_type:  "first" | "delta" | "ask_first" | "ask_delta"
+        current_spec: delta/ask_delta 专用，当前生效的完整 PlotSpec dict（不含 data_source）。
+                      first/ask_first 时忽略此参数。
 
     Returns:
         {"messages": [...]} 格式的 dict，直接可序列化为 JSONL。
     """
     system_prompt = _SYSTEM_MAP.get(record_type, SYSTEM_FIRST_FINETUNE)
 
-    if record_type == "delta" and current_spec is not None:
+    # 修改轮（含 ask_delta）使用带 current_spec 的 user message 格式
+    if record_type in ("delta", "ask_delta") and current_spec is not None:
         user_content = format_user_message_delta(user_input, data_context, current_spec)
     else:
         user_content = format_user_message(user_input, data_context)
 
-    tool_name = "create_plot" if record_type == "first" else "update_plot"
+    # 工具名
+    if record_type in ("ask_first", "ask_delta"):
+        tool_name = "ask_user"
+    elif record_type == "first":
+        tool_name = "create_plot"
+    else:
+        tool_name = "update_plot"
+
     assistant_content = json.dumps(
         {"tool": tool_name, "arguments": plotspec},
         ensure_ascii=False, separators=(",", ":"),
@@ -153,6 +168,7 @@ def pack(val_ratio: float, seed: int) -> None:
     n_first = len(records)
 
     # 合并修改轮数据（若存在）
+    n_delta = 0
     if DELTA_PAIRS_PATH.exists():
         with DELTA_PAIRS_PATH.open(encoding="utf-8") as f:
             for line in f:
@@ -160,9 +176,24 @@ def pack(val_ratio: float, seed: int) -> None:
                 if line:
                     records.append(json.loads(line))
         n_delta = len(records) - n_first
-        print(f"读取 {n_first} 条首轮配对 + {n_delta} 条修改轮配对，共 {len(records)} 条")
-    else:
-        print(f"读取 {n_first} 条有效配对（未找到 delta_pairs.jsonl，仅首轮数据）")
+
+    # 合并手动合成数据（若存在，first/delta 混合）
+    n_manual = 0
+    if MANUAL_PAIRS_PATH.exists():
+        before = len(records)
+        with MANUAL_PAIRS_PATH.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        n_manual = len(records) - before
+
+    print(
+        f"读取 {n_first} 条首轮配对"
+        + (f" + {n_delta} 条修改轮配对" if n_delta else "")
+        + (f" + {n_manual} 条手动配对" if n_manual else "")
+        + f"，共 {len(records)} 条"
+    )
 
     # 随机分割
     rng = random.Random(seed)

@@ -91,19 +91,27 @@ def _build_context(df: pd.DataFrame, cache_key: str) -> str:
     ⚠️  B线若修改此函数的输出格式，必须提前告知 A线。
     A线的微调训练数据（instruction 字段）使用与此处完全相同的格式。
     两者格式不一致会导致推理时模型无法正确理解数据摘要。
+    格式变更后须运行 scripts/refresh_data_contexts.py 刷新已存储的配对文件。
 
     当前输出格式示例（以 example_bar.csv 为例）：
 
         数据摘要：
         - 形状：24行 × 4列
         - 列信息：
-          · method（类别型，唯一值6个）：BERT-base, RoBERTa-base, XLNet-base, ALBERT-base
+          · method（类别型，唯一值6个）：BERT-base, RoBERTa-base, XLNet-base, ALBERT-base, GPT2-medium, DeBERTa-base
+          · dataset（类别型，唯一值4个）：SST-2, MR, CR, CoLA
           · accuracy（数值型，范围55.1~95.1）
           · std（数值型，范围0.3~1.1）
-        - 前2行预览：[["BERT-base","SST-2",93.5,0.3],["BERT-base","MR",87.3,0.4]]
+        - 前2行预览：[['BERT-base', 'SST-2', 93.5, 0.3], ['BERT-base', 'MR', 87.3, 0.4]]
         - 缓存key：cache://a1b2c3d4
 
-    验证方式：python -c "from tools.loader import load_data; ctx,_ = load_data('data/example_bar.csv'); print(ctx)"
+    格式规则：
+    - 类别型：唯一值 ≤ 10 时全部列出；> 10 时列出前4个并附"…等N个"
+    - 数值型：显示 min~max（Python 默认浮点表示，不强制格式化）
+    - 时间型：显示 YYYY-MM-DD 格式的 min~max
+    - 任意列有缺失值时，在类型描述中追加"，含N个缺失值"
+
+    验证方式：python -c "from tools.loader import load_data; ctx,_ = load_data('data/smoke_test/example_bar.csv'); print(ctx)"
     """
     rows, cols = df.shape
     lines: list[str] = [
@@ -114,17 +122,29 @@ def _build_context(df: pd.DataFrame, cache_key: str) -> str:
 
     for col in df.columns:
         col_type = _infer_column_type(df[col])
+        null_count = int(df[col].isna().sum())
+        null_note = f"，含{null_count}个缺失值" if null_count > 0 else ""
+
         if col_type == "类别型":
             unique_vals = df[col].dropna().unique()
             unique_count = len(unique_vals)
-            sample = ", ".join(str(v) for v in unique_vals[:4])
-            lines.append(f"  · {col}（{col_type}，唯一值{unique_count}个）：{sample}")
+            if unique_count <= 10:
+                values_str = ", ".join(str(v) for v in unique_vals)
+            else:
+                values_str = ", ".join(str(v) for v in unique_vals[:4]) + f"…等{unique_count}个"
+            lines.append(f"  · {col}（{col_type}，唯一值{unique_count}个{null_note}）：{values_str}")
         elif col_type == "数值型":
             lo = df[col].min()
             hi = df[col].max()
-            lines.append(f"  · {col}（{col_type}，范围{lo}~{hi}）")
-        else:
-            lines.append(f"  · {col}（{col_type}）")
+            lines.append(f"  · {col}（{col_type}，范围{lo}~{hi}{null_note}）")
+        else:  # 时间型
+            try:
+                parsed = pd.to_datetime(df[col], format="mixed", dayfirst=False)
+                lo = parsed.min().strftime("%Y-%m-%d")
+                hi = parsed.max().strftime("%Y-%m-%d")
+                lines.append(f"  · {col}（{col_type}，范围{lo}~{hi}{null_note}）")
+            except Exception:
+                lines.append(f"  · {col}（{col_type}{null_note}）")
 
     preview = df.head(2).values.tolist()
     lines.append(f"- 前2行预览：{preview}")
