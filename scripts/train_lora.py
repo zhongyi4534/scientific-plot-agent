@@ -266,10 +266,11 @@ def train(
     # ── 保存最终结果 ──────────────────────────────────────────────────────
     # 只保存 LoRA adapter，体积约 50MB（远小于完整模型权重 ~3.4GB）
     final_dir = output_dir / "final"
-    trainer.model.save_pretrained(str(final_dir))
-    tokenizer.save_pretrained(str(final_dir))
+    trainer.save_model(final_dir)
+    
 
     if is_main_process:
+        tokenizer.save_pretrained(str(final_dir))
         print(f"\n{'='*55}")
         print(f"  训练完成！")
         print(f"  Adapter 已保存到：{final_dir}")
