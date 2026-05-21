@@ -167,7 +167,9 @@ def _layout_bar(df: pd.DataFrame, spec: dict, theme: ThemeConfig) -> LayoutParam
     fig_w = max(theme.figure_width, min_width)
 
     n_legend = n_groups if n_groups > 1 else 0
-    legend_loc = _resolve_legend_loc(_legend_params(n_legend), spec)
+    # bar 图柱体占据大量图内空间，3 组及以上默认外置图例以避免遮挡
+    _bar_default_legend = "outside_right" if n_legend >= 3 else _legend_params(n_legend)
+    legend_loc = _resolve_legend_loc(_bar_default_legend, spec)
     if legend_loc == "outside_right":
         fig_w += 1.2  # 为图外图例留空间
 

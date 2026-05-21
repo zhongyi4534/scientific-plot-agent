@@ -127,6 +127,71 @@ def _add_bar_values(
                     f"{value:.1f}", ha="center", va="bottom", fontsize=layout.font_size)
 
 
+def _bboxes_overlap(a, b) -> bool:
+    """检查两个显示坐标 Bbox 是否有像素级实质交叠（退化框或异常视为不叠）。"""
+    try:
+        return (
+            a.width > 0 and a.height > 0
+            and b.width > 0 and b.height > 0
+            and a.overlaps(b)
+        )
+    except Exception:
+        return False
+
+
+def _place_legend(
+    fig: plt.Figure,
+    ax: plt.Axes,
+    theme: ThemeConfig,
+    layout: LayoutParams,
+) -> None:
+    """
+    智能放置图例。
+
+    "inside_best" 模式：用 loc="best" 放图内，触发一次 canvas.draw() 后
+    对图例 bbox 与所有数据元素（柱子/折线/散点/数值标注）做像素级重叠检测；
+    发现重叠则自动切换到图外右侧（bbox_to_anchor=(1.02, 1)），
+    constrained_layout 会相应压缩 axes 宽度以容纳图例。
+
+    "outside_right" / "none" 模式：直接执行，不做重叠检测。
+    """
+    handles, _ = ax.get_legend_handles_labels()
+    if not handles or layout.legend_loc == "none":
+        if ax.get_legend() is not None:
+            ax.get_legend().remove()
+        return
+
+    common_kw = dict(frameon=theme.legend_frameon, fontsize=layout.legend_fontsize)
+
+    if layout.legend_loc == "outside_right":
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1),
+                  borderaxespad=0, **common_kw)
+        return
+
+    # "inside_best"：放置后 post-draw 检测重叠
+    legend = ax.legend(loc="best", **common_kw)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    leg_bb = legend.get_window_extent(renderer)
+
+    data_artists = (
+        list(ax.patches)       # 柱子（bar/hbar）
+        + list(ax.lines)       # 折线、误差棒线段
+        + list(ax.collections) # 散点 PathCollection
+        + list(ax.texts)       # 柱顶数值标注
+    )
+    overlap = any(
+        _bboxes_overlap(leg_bb, a.get_window_extent(renderer))
+        for a in data_artists
+        if a.get_visible()
+    )
+
+    if overlap:
+        legend.remove()
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1),
+                  borderaxespad=0, **common_kw)
+
+
 def _apply_theme_to_fig(
     fig: plt.Figure, ax: plt.Axes, theme: ThemeConfig, layout: LayoutParams
 ) -> None:
@@ -167,17 +232,7 @@ def _apply_theme_to_fig(
     else:
         _auto_rotate_xlabels(fig, ax, rotate=layout.rotate_labels)
 
-    # 图例位置（统一处理）：仅当存在有标签的 artist 时才创建图例
-    handles, labels = ax.get_legend_handles_labels()
-    if handles and layout.legend_loc != "none":
-        common_kw = dict(frameon=theme.legend_frameon, fontsize=layout.legend_fontsize)
-        if layout.legend_loc == "outside_right":
-            ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1),
-                      borderaxespad=0, **common_kw)
-        else:  # "inside_best"
-            ax.legend(loc="best", **common_kw)
-    elif ax.get_legend() is not None:
-        ax.get_legend().remove()
+    _place_legend(fig, ax, theme, layout)
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +295,10 @@ def _render_bar(
     sort_mode = spec.get("params_sort")
     show_values = spec.get("params_show_values", False)
     hatch_seq = theme.hatch  # list[str] | None；多分组按索引轮换
-    edgecolor = theme.edgecolor or "none"
+    # hatch 线用 edgecolor 绘制；未显式设置时默认白色（在彩色柱子上可见），无 hatch 时保持 "none"
+    edgecolor = theme.edgecolor if theme.edgecolor is not None else (
+        "white" if hatch_seq else "none"
+    )
     if hatch_seq:
         mpl.rcParams["hatch.linewidth"] = theme.hatch_linewidth
 
@@ -321,6 +379,13 @@ def _render_bar(
     _apply_axis_limits(ax, layout, horizontal)
     _apply_axis_scales(ax, spec, horizontal)
     _apply_theme_to_fig(fig, ax, theme, layout)
+
+    # 水平柱状图：类别标签在 Y 轴，axes_x_tick_rotation 应映射到 Y 轴旋转
+    if horizontal:
+        user_rot = spec.get("axes_x_tick_rotation")
+        if user_rot:
+            ax.tick_params(axis="y", labelrotation=int(user_rot))
+
     return fig
 
 
