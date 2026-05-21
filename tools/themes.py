@@ -245,6 +245,7 @@ _STYLE_OVERRIDE_MAP: dict[str, str] = {
     "style_figure_width":   "figure_width",
     "style_font_family":    "font_family",
     "style_spines":         "spines",
+    "style_custom_palette": "palette",  # 直接覆盖配色列表；优先级高于 style_palette_override
 }
 
 

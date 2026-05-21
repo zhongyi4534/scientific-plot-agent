@@ -98,7 +98,7 @@ def validate(spec: dict) -> ValidationResult:
         if isinstance(palette_override, list):
             errors.append(
                 f"style_palette_override 应为枚举字符串（如 'morandi'），"
-                f"不能是颜色列表。若要指定 line 图自定义颜色，请用 params_line_colors 字段。"
+                f"不能是颜色列表。若要自定义颜色列表，请用 style_custom_palette 字段。"
                 f"合法值：{PALETTE_OVERRIDES}"
             )
         elif palette_override not in PALETTE_OVERRIDES:

@@ -142,11 +142,10 @@ with gr.Blocks(title="Scientific Plot Agent") as demo:
             )
             data_summary = gr.Textbox(
                 label="数据摘要",
-                lines=10,
+                lines=8,
                 interactive=False,
                 placeholder="上传文件或输入路径后自动显示数据摘要…",
             )
-
         # 右侧列：图表预览 + 输入区
         with gr.Column(scale=2):
             image_output = gr.Image(

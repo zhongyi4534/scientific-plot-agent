@@ -58,7 +58,10 @@ def fill_defaults(spec: dict) -> dict:
     """
     result = dict(spec)
     for key, default_val in OPTIONAL_DEFAULTS.items():
-        if key not in result:
+        # Fill missing keys, AND treat explicit null as "reset to default" when
+        # the field's own default is non-None (e.g. label_title="" or params_show_markers=True).
+        # Fields whose default IS None (e.g. data_group_by, style_grid) keep None as-is.
+        if key not in result or (result[key] is None and default_val is not None):
             result[key] = default_val
 
     # data_y 单元素列表 → 字符串，防止 group_by 失效

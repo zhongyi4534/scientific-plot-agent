@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from model.generator import generate_spec
 from system.merger import fill_defaults, merge_delta
@@ -41,7 +42,7 @@ class PlotAgent:
         self.current_spec: dict | None = None
         self.current_cache_key: str | None = None
         self.data_context: str | None = None
-        self.pending_user_input: str | None = None  # ask_user 触发时暂存原始请求
+        self.pending_user_input: str | None = None   # ask_user 触发时暂存原始请求
 
     def load_data(self, source: str) -> str:
         """

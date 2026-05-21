@@ -288,6 +288,8 @@ def _render_bar(
     df: pd.DataFrame, spec: dict, theme: ThemeConfig, layout: LayoutParams
 ) -> plt.Figure:
     """渲染柱状图。Mock实现，B线替换"""
+    if spec.get("data_filter"):
+        df = df.query(spec["data_filter"])
     x_col = spec["data_x"]
     y_col = spec["data_y"]
     group_col = spec.get("data_group_by")
@@ -395,13 +397,14 @@ def _render_line(
     df: pd.DataFrame, spec: dict, theme: ThemeConfig, layout: LayoutParams
 ) -> plt.Figure:
     """渲染折线图。Mock实现，B线替换"""
+    if spec.get("data_filter"):
+        df = df.query(spec["data_filter"])
     x_col = spec["data_x"]
     y_spec = spec["data_y"]
     group_col = spec.get("data_group_by")
     err_col = spec.get("data_error")
     linestyle = spec.get("params_linestyle", "solid")
-    line_colors = spec.get("params_line_colors")
-    palette = line_colors if line_colors else theme.palette
+    palette = theme.palette  # style_custom_palette 已在 apply_style_overrides 中覆写到 theme.palette
     use_markers = spec.get("params_show_markers", True)
     marker = (spec.get("params_marker_style") or "o") if use_markers else None
     smooth = spec.get("params_smooth", False)
@@ -455,6 +458,8 @@ def _render_scatter(
     df: pd.DataFrame, spec: dict, theme: ThemeConfig, layout: LayoutParams
 ) -> plt.Figure:
     """渲染散点图。Mock实现，B线替换"""
+    if spec.get("data_filter"):
+        df = df.query(spec["data_filter"])
     x_col = spec["data_x"]
     y_col = spec["data_y"]
     group_col = spec.get("data_group_by")
@@ -500,6 +505,8 @@ def _render_box(
     df: pd.DataFrame, spec: dict, theme: ThemeConfig, layout: LayoutParams
 ) -> plt.Figure:
     """渲染箱线图。Mock实现，B线替换"""
+    if spec.get("data_filter"):
+        df = df.query(spec["data_filter"])
     x_col = spec["data_x"]
     y_col = spec["data_y"]
     show_points = spec.get("params_show_points", "outliers")

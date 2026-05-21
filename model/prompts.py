@@ -55,13 +55,13 @@ _FIELD_SPEC: str = f"""\
 - axes_y_scale: Y轴缩放，"linear"（默认）或 "log"
 - legend_loc: 图例位置，"inside"=图内最优位置，"outside_right"=图外右侧，"none"=不显示，null=自动
 
-【配色可选字段】（两个字段用途完全不同，不能混用）
+【配色可选字段】（两个字段用途不同，不能混用）
 - style_palette_override: 切换预设配色方案，值只能是以下字符串之一：
     {_PO}
-  ⚠️ 不能填颜色列表，不能填十六进制颜色
-- params_line_colors: 【仅line图】自定义每条线的颜色，值为十六进制颜色字符串列表
-    示例：["#E64B35","#4DBBD5","#00A087","#3C5488"]
-  ⚠️ 这个字段只用于 line 图；bar/scatter/box 图改颜色只能用 style_palette_override
+  ⚠️ 只能填预设名称字符串，不能填颜色列表
+- style_custom_palette: 自定义颜色列表，适用所有图表类型，优先级高于 style_palette_override
+    值为十六进制颜色字符串列表：["#E64B35","#4DBBD5","#00A087","#3C5488"]
+  ⚠️ 不能填预设名称字符串
 
 【主题覆写字段】（在所选主题基础上修改单项视觉属性，null=保留主题默认）
 - style_grid: true/false，是否显示网格
@@ -91,7 +91,6 @@ line图:
   params_marker_style(标记形状，"o"/"s"/"^"/"D"/"v"/"P"/"*"，null=默认"o")
   params_marker_size(标记大小数值，如4；null=按数据密度自动调整)
   params_smooth(true/false) · params_linestyle("solid"/"dashed"/"dotted"/"dashdot")
-  params_line_colors(自定义颜色列表，见配色字段说明)
 
 scatter图: params_alpha(0~1) · params_show_regression(true/false)
   params_marker_style(标记形状) · params_marker_size(标记大小，null=按数据密度自动调整)
@@ -130,9 +129,8 @@ SYSTEM_FIRST_FINETUNE: str = f"""\
    · 信息充足时：{"tool":"create_plot","arguments":{...字段...}}
    · 无法确定 data_x 或 data_y 应填哪个列名时（仅此情况）：
      {"tool":"ask_user","arguments":{"question":"..."}}
-     问题中必须列出数据摘要中的可用列名并给出建议，例如：
-     "请问您想展示哪个指标？可选：accuracy / f1 / recall（建议 accuracy）"
-     ⚠️ 其他情况（chart_type/style_theme 不确定等）不要调用 ask_user，直接选合理默认值"""
+     问题中必须列出数据摘要中的可用列名并给出建议
+     ⚠️ 其他情况不要调用 ask_user，直接选合理默认值"""
 
 
 # ── 修改轮系统提示词 ───────────────────────────────────────────────────────────

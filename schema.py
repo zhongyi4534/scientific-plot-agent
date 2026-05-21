@@ -51,6 +51,7 @@ OPTIONAL_DEFAULTS: dict = {
     "axes_x_tick_rotation": 0,
     "axes_x_rotate_labels": False,  # True=标签过密时旋转，False=缩小字号（默认）
     "style_palette_override": None,
+    "style_custom_palette": None,   # 自定义颜色列表，如 ["#E64B35","#4DBBD5","#00A087"]；适用所有图表类型；优先级高于 style_palette_override
     # 主题属性覆写（None = 使用所选主题的默认值）
     "style_grid": None,
     "style_line_width": None,
@@ -76,7 +77,6 @@ OPTIONAL_DEFAULTS: dict = {
     "params_show_markers": True,
     "params_smooth": False,
     "params_linestyle": "solid",    # 线型："solid"/"dashed"/"dotted"/"dashdot"；所有线统一
-    "params_line_colors": None,     # 按线顺序的颜色列表，如 ["#E64B35","#4DBBD5"]；None=使用主题配色
     "params_marker_style": None,    # 标记样式，如 "o" "s" "^" "D" "v" "P" "*"；None=使用"o"
     "params_marker_size": None,     # 标记大小（数值）；None=LayoutEngine 按数据密度自动计算
     # scatter 专属
@@ -97,7 +97,7 @@ OPTIONAL_DEFAULTS: dict = {
 # 每种图表类型对应的有效 params 字段
 CHART_PARAMS: dict[str, list[str]] = {
     "bar":     ["params_orientation", "params_stacked", "params_sort", "params_show_values"],
-    "line":    ["params_show_markers", "params_smooth", "params_linestyle", "params_line_colors",
+    "line":    ["params_show_markers", "params_smooth", "params_linestyle",
                 "params_marker_style", "params_marker_size"],
     "scatter": ["params_alpha", "params_show_regression", "params_marker_style", "params_marker_size"],
     "box":     ["params_show_points", "params_notch"],
