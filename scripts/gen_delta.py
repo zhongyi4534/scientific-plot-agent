@@ -9,12 +9,13 @@ scripts/gen_delta.py
   2. LLM 生成（多样）：调用 DeepSeek API，给定当前 spec 后让模型想象各种合理的修改需求
 
 用法：
-    python scripts/gen_delta.py              # 默认：LLM + 规则，目标 200 条
-    python scripts/gen_delta.py --target 400  # 目标 400 条
-    python scripts/gen_delta.py --no-llm     # 只用规则驱动
-    python scripts/gen_delta.py --no-rule    # 只用 LLM
-    python scripts/gen_delta.py --limit 20   # 只使用前 20 条种子（测试模式）
-    python scripts/gen_delta.py --append     # 追加到已有 delta_pairs.jsonl
+    python scripts/gen_delta.py                    # 默认：LLM + 规则，目标 800 条
+    python scripts/gen_delta.py --target 400       # 目标 400 条
+    python scripts/gen_delta.py --workers 6        # 6 个并发线程（加速 LLM 调用）
+    python scripts/gen_delta.py --no-llm           # 只用规则驱动
+    python scripts/gen_delta.py --no-rule          # 只用 LLM
+    python scripts/gen_delta.py --limit 20         # 只使用前 20 条种子（测试模式）
+    python scripts/gen_delta.py --append           # 追加；自动识别已用种子，从剩余容量继续
 
 环境变量：
     DEEPSEEK_API_KEY   DeepSeek API 密钥（--no-llm 时可不设）
@@ -27,7 +28,11 @@ import argparse
 import json
 import os
 import random
+import re
+import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor
+from concurrent.futures import wait as cf_wait
 from pathlib import Path
 from typing import Optional
 
@@ -57,22 +62,22 @@ from scripts.validate_pairs import _check_col_exists, _check_semantic_validity
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-PAIRS_DIR = Path("data/pairs")
+PAIRS_DIR             = Path("data/pairs")
 VALID_PAIRS_PATH      = PAIRS_DIR / "valid_pairs.jsonl"
 DELTA_PAIRS_PATH      = PAIRS_DIR / "delta_pairs.jsonl"
 DELTA_REJECT_LOG_PATH = PAIRS_DIR / "delta_reject_log.jsonl"
 
-N_LLM_PER_SPEC = 4   # LLM 模式每条种子 spec 最多生成的候选对数
-N_RULE_PER_SPEC = 1  # 规则模式每条种子 spec 最多采用的候选对数
-MAX_PER_SEED = 5     # 每条种子最多写出的修改轮样本数
-TARGET_DEFAULT = 200  # 默认目标总条数
-MAX_CYCLES = 5        # 种子集最多循环几轮
+N_LLM_PER_SPEC  = 4   # LLM 模式每条种子 spec 最多生成的候选对数
+N_RULE_PER_SPEC = 1   # 规则模式每条种子 spec 最多采用的候选对数
+MAX_PER_SEED    = 5   # 每条种子最多写出的修改轮样本数
+TARGET_DEFAULT  = 800 # 默认目标总条数
+MAX_CYCLES      = 5   # 种子集最多循环几轮
 
 MAX_RETRIES = 3
 RETRY_DELAY = 5.0
 
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-_DEFAULT_MODEL = "deepseek-v4-pro"
+_DEFAULT_MODEL     = "deepseek-v4-pro"
 
 # 允许出现在 delta 中的字段（排除 data_source）
 _VALID_DELTA_FIELDS: frozenset[str] = frozenset(
@@ -94,10 +99,6 @@ _THEME_ZH: dict[str, str] = {
 _RNG = random.Random(42)
 
 
-def _pick(options: list) -> object:
-    return _RNG.choice(options)
-
-
 # ---------------------------------------------------------------------------
 # 规则驱动生成
 # ---------------------------------------------------------------------------
@@ -105,23 +106,33 @@ def _pick(options: list) -> object:
 def _rule_candidates(
     spec: dict,
     df: pd.DataFrame,
+    rng: random.Random | None = None,
 ) -> list[tuple[dict, str]]:
     """
     从当前 spec 生成简单规则变更候选，返回随机打乱的 (delta, user_input) 列表。
     调用者按需截取前 N_RULE_PER_SPEC 条通过校验的候选。
+
+    rng: 随机数生成器；None 时使用模块全局 _RNG（仅单线程安全）。
+         并发调用时应传入线程独立的 random.Random 实例。
     """
+    if rng is None:
+        rng = _RNG
+
+    def pick(options: list) -> object:
+        return rng.choice(options)
+
     candidates: list[tuple[dict, str]] = []
-    chart_type = spec.get("chart_type", "")
+    chart_type    = spec.get("chart_type", "")
     current_theme = spec.get("style_theme", "")
 
     # 1. 主题切换
     other_themes = [t for t in STYLE_THEMES if t != current_theme]
     if other_themes:
-        new_theme = _pick(other_themes)
+        new_theme = pick(other_themes)
         desc = _THEME_ZH.get(new_theme, new_theme)
         candidates.append((
             {"style_theme": new_theme},
-            _pick([
+            pick([
                 f"换成{desc}风格", f"改用{desc}主题", f"用{desc}配色方案",
                 f"主题改为{desc}", f"切换到{desc}配色", f"配色方案换成{desc}",
             ]),
@@ -132,12 +143,12 @@ def _rule_candidates(
     if current_grid is True:
         candidates.append((
             {"style_grid": False},
-            _pick(["去掉网格线", "隐藏背景网格", "不显示网格", "把网格线关掉", "背景网格不要了", "取消网格显示"]),
+            pick(["去掉网格线", "隐藏背景网格", "不显示网格", "把网格线关掉", "背景网格不要了", "取消网格显示"]),
         ))
     else:
         candidates.append((
             {"style_grid": True},
-            _pick(["加上网格线", "显示网格线", "背景加网格", "把网格线打开", "需要背景网格辅助读数", "加一下参考网格线"]),
+            pick(["加上网格线", "显示网格线", "背景加网格", "把网格线打开", "需要背景网格辅助读数", "加一下参考网格线"]),
         ))
 
     # 3. 标题设置 / 清除
@@ -145,14 +156,14 @@ def _rule_candidates(
     if current_title:
         candidates.append((
             {"label_title": None},
-            _pick(["删掉标题", "去掉图表标题", "标题留空", "不需要标题了", "把标题去掉", "标题删了吧"]),
+            pick(["删掉标题", "去掉图表标题", "标题留空", "不需要标题了", "把标题去掉", "标题删了吧"]),
         ))
     else:
         y_col = spec.get("data_y", "")
         title = f"{y_col} 对比分析" if isinstance(y_col, str) else "实验结果对比"
         candidates.append((
             {"label_title": title},
-            _pick([
+            pick([
                 f'加一个标题"{title}"', f'标题设为"{title}"', f"给图加标题：{title}",
                 f'图表标题改成"{title}"', f"标题写{title}",
             ]),
@@ -161,11 +172,11 @@ def _rule_candidates(
     # 4. Y轴标签
     current_label_y = spec.get("label_y") or ""
     if not current_label_y:
-        y_col = spec.get("data_y", "")
+        y_col  = spec.get("data_y", "")
         label_y = str(y_col) if isinstance(y_col, str) else "数值"
         candidates.append((
             {"label_y": label_y},
-            _pick([
+            pick([
                 f'Y轴标签设为"{label_y}"', f'Y轴加标注"{label_y}"', f"把Y轴标签改为{label_y}",
                 f"Y轴标题写{label_y}", f"Y轴描述加上{label_y}",
             ]),
@@ -173,7 +184,7 @@ def _rule_candidates(
     else:
         candidates.append((
             {"label_y": None},
-            _pick(["去掉Y轴标签", "Y轴标签留空", "Y轴不要标注了", "删掉Y轴标题", "Y轴标签清空"]),
+            pick(["去掉Y轴标签", "Y轴标签留空", "Y轴不要标注了", "删掉Y轴标题", "Y轴标签清空"]),
         ))
 
     # 5. Y轴范围（需要数值型 Y 列）
@@ -181,12 +192,12 @@ def _rule_candidates(
     if isinstance(y_col, str) and y_col in df.columns and pd.api.types.is_numeric_dtype(df[y_col]):
         col_min = float(df[y_col].min())
         col_max = float(df[y_col].max())
-        span = col_max - col_min
+        span    = col_max - col_min
         if span > 0:
             nice_min = round(col_min - span * 0.05, 2)
             candidates.append((
                 {"axes_y_min": nice_min},
-                _pick([
+                pick([
                     f"Y轴从{nice_min}开始", f"Y轴下限设为{nice_min}", f"Y轴最小值改为{nice_min}",
                     f"纵轴起始值设成{nice_min}", f"Y轴底部从{nice_min}截断",
                 ]),
@@ -195,10 +206,10 @@ def _rule_candidates(
     # 6. X轴刻度旋转
     current_rot = spec.get("axes_x_tick_rotation", 0)
     if current_rot == 0:
-        angle = _pick([30, 45])
+        angle = pick([30, 45])
         candidates.append((
             {"axes_x_tick_rotation": angle},
-            _pick([
+            pick([
                 f"X轴标签旋转{angle}度", f"X轴刻度旋转{angle}°", f"把X轴标注斜{angle}度",
                 f"X轴文字旋转{angle}度方便阅读", f"横轴刻度标签倾斜{angle}度",
             ]),
@@ -206,7 +217,7 @@ def _rule_candidates(
     else:
         candidates.append((
             {"axes_x_tick_rotation": 0},
-            _pick(["X轴标签恢复水平", "把X轴刻度旋转角度去掉", "X轴标签改回水平", "取消X轴旋转", "横轴标签放平"]),
+            pick(["X轴标签恢复水平", "把X轴刻度旋转角度去掉", "X轴标签改回水平", "取消X轴旋转", "横轴标签放平"]),
         ))
 
     # 7. 图例位置
@@ -214,7 +225,7 @@ def _rule_candidates(
     if current_loc != "outside_right":
         candidates.append((
             {"legend_loc": "outside_right"},
-            _pick([
+            pick([
                 "图例放到图外右侧", "把图例移到右侧图外", "legend放在图的外部右方",
                 "图例挪到图的右边外侧", "legend放图外右边", "把图例放到右侧外部",
             ]),
@@ -222,24 +233,21 @@ def _rule_candidates(
     if current_loc != "none":
         candidates.append((
             {"legend_loc": "none"},
-            _pick([
-                "隐藏图例", "不显示图例", "去掉legend",
-                "把图例去掉", "legend不要了", "图例隐藏掉",
-            ]),
+            pick(["隐藏图例", "不显示图例", "去掉legend", "把图例去掉", "legend不要了", "图例隐藏掉"]),
         ))
     if current_loc in ("outside_right", "none"):
         candidates.append((
             {"legend_loc": None},
-            _pick(["图例放回图内", "图例恢复默认位置", "legend放回图里", "图例移回图内", "恢复图例默认"]),
+            pick(["图例放回图内", "图例恢复默认位置", "legend放回图里", "图例移回图内", "恢复图例默认"]),
         ))
 
     # 8. 字体大小
     current_fs = spec.get("style_font_size")
     if current_fs is None or int(current_fs) <= 10:
-        new_fs = _pick([12, 14])
+        new_fs = pick([12, 14])
         candidates.append((
             {"style_font_size": new_fs},
-            _pick([
+            pick([
                 f"字号调大到{new_fs}", f"把字体改成{new_fs}号", f"字体大小设为{new_fs}",
                 f"文字大小改为{new_fs}pt", f"所有字号调整为{new_fs}",
             ]),
@@ -247,7 +255,7 @@ def _rule_candidates(
     else:
         candidates.append((
             {"style_font_size": None},
-            _pick(["字号恢复默认", "字体大小重置为主题默认", "字体大小恢复原来的", "字号恢复主题设置", "取消字号修改"]),
+            pick(["字号恢复默认", "字体大小重置为主题默认", "字体大小恢复原来的", "字号恢复主题设置", "取消字号修改"]),
         ))
 
     # 9. 对数坐标
@@ -255,7 +263,7 @@ def _rule_candidates(
     if current_scale == "linear":
         candidates.append((
             {"axes_y_scale": "log"},
-            _pick([
+            pick([
                 "Y轴换成对数刻度", "Y轴用log坐标", "改成对数坐标轴",
                 "纵轴改为对数尺度", "Y轴切换到log scale", "用对数坐标显示Y轴",
             ]),
@@ -263,13 +271,13 @@ def _rule_candidates(
     else:
         candidates.append((
             {"axes_y_scale": "linear"},
-            _pick(["Y轴恢复线性刻度", "取消对数坐标", "Y轴换回线性刻度", "恢复线性Y轴", "纵轴改回普通线性坐标"]),
+            pick(["Y轴恢复线性刻度", "取消对数坐标", "Y轴换回线性刻度", "恢复线性Y轴", "纵轴改回普通线性坐标"]),
         ))
 
     # 10. 配色方案
     candidates.append((
-        {"style_palette_override": _pick(PALETTE_OVERRIDES)},
-        _pick([
+        {"style_palette_override": pick(PALETTE_OVERRIDES)},
+        pick([
             "换一套配色方案", "换成tab10配色", "颜色配色改成莫兰迪色系", "换个更鲜明的颜色方案",
             "配色换成nature_d", "改用coolwarm色板", "用不同的颜色主题", "换个配色试试",
         ]),
@@ -280,7 +288,7 @@ def _rule_candidates(
         if not spec.get("params_sort"):
             candidates.append((
                 {"params_sort": "desc"},
-                _pick([
+                pick([
                     "柱子按Y值从大到小排序", "按数值降序排列柱子", "排一下顺序，最高的放左边",
                     "柱状图按高低排列", "从高到低排列各组柱子",
                 ]),
@@ -288,13 +296,13 @@ def _rule_candidates(
         else:
             candidates.append((
                 {"params_sort": None},
-                _pick(["取消排序", "柱子恢复原始顺序", "去掉排序", "恢复原来的柱子顺序", "不需要排序了"]),
+                pick(["取消排序", "柱子恢复原始顺序", "去掉排序", "恢复原来的柱子顺序", "不需要排序了"]),
             ))
         show_val = spec.get("params_show_values", False)
         candidates.append((
             {"params_show_values": not show_val},
-            _pick(["柱顶显示数值", "把每根柱子的数值标出来", "每根柱上标注具体数字", "柱子上面加数值标签"]) if not show_val
-            else _pick(["去掉柱顶数值", "不显示柱子数值标注", "柱上数字标注去掉", "取消柱子数值显示", "数值标注不要了"]),
+            pick(["柱顶显示数值", "把每根柱子的数值标出来", "每根柱上标注具体数字", "柱子上面加数值标签"]) if not show_val
+            else pick(["去掉柱顶数值", "不显示柱子数值标注", "柱上数字标注去掉", "取消柱子数值显示", "数值标注不要了"]),
         ))
 
     elif chart_type == "line":
@@ -302,44 +310,44 @@ def _rule_candidates(
         if not smooth:
             candidates.append((
                 {"params_smooth": True},
-                _pick(["折线改成平滑曲线", "加平滑插值", "线条平滑一下", "用平滑样条曲线", "折线平滑处理一下"]),
+                pick(["折线改成平滑曲线", "加平滑插值", "线条平滑一下", "用平滑样条曲线", "折线平滑处理一下"]),
             ))
         else:
             candidates.append((
                 {"params_smooth": False},
-                _pick(["取消平滑，改回折线", "直接连线，不用平滑", "去掉平滑效果", "恢复折线", "不要平滑插值了"]),
+                pick(["取消平滑，改回折线", "直接连线，不用平滑", "去掉平滑效果", "恢复折线", "不要平滑插值了"]),
             ))
         current_ls = spec.get("params_linestyle", "solid")
         if current_ls == "solid":
-            new_ls = _pick(["dashed", "dotted", "dashdot"])
+            new_ls = pick(["dashed", "dotted", "dashdot"])
             candidates.append((
                 {"params_linestyle": new_ls},
-                _pick(["线型改成虚线", "用点划线", "改用虚线样式", "线条换成虚线", "线型改为虚线看起来更清晰"]),
+                pick(["线型改成虚线", "用点划线", "改用虚线样式", "线条换成虚线", "线型改为虚线看起来更清晰"]),
             ))
         else:
             candidates.append((
                 {"params_linestyle": "solid"},
-                _pick(["线型恢复实线", "换回实线", "线型改回实线", "恢复实线样式", "用实线连接数据点"]),
+                pick(["线型恢复实线", "换回实线", "线型改回实线", "恢复实线样式", "用实线连接数据点"]),
             ))
         show_markers = spec.get("params_show_markers", True)
         candidates.append((
             {"params_show_markers": not show_markers},
-            _pick(["不显示数据点标记", "去掉线上的标记点", "隐藏折线上的数据点", "标记点不要了", "取消数据点标注"]) if show_markers
-            else _pick(["加上数据点标记", "在数据点上显示标记", "给每个数据点加标记", "折线上标出数据点", "显示数据点marker"]),
+            pick(["不显示数据点标记", "去掉线上的标记点", "隐藏折线上的数据点", "标记点不要了", "取消数据点标注"]) if show_markers
+            else pick(["加上数据点标记", "在数据点上显示标记", "给每个数据点加标记", "折线上标出数据点", "显示数据点marker"]),
         ))
 
     elif chart_type == "scatter":
-        alpha = spec.get("params_alpha", 0.8)
+        alpha     = spec.get("params_alpha", 0.8)
         new_alpha = 0.5 if float(alpha) > 0.6 else 0.9
         candidates.append((
             {"params_alpha": new_alpha},
-            _pick([
+            pick([
                 f"透明度调整为{new_alpha}", f"点的透明度改为{new_alpha}",
                 f"散点透明度设为{new_alpha}", f"点透明度改成{new_alpha}", f"alpha值设为{new_alpha}",
             ]),
         ))
-        show_reg = spec.get("params_show_regression", False)
-        x_col = spec.get("data_x", "")
+        show_reg  = spec.get("params_show_regression", False)
+        x_col     = spec.get("data_x", "")
         x_is_numeric = (
             isinstance(x_col, str)
             and x_col in df.columns
@@ -348,12 +356,12 @@ def _rule_candidates(
         if not show_reg and x_is_numeric:
             candidates.append((
                 {"params_show_regression": True},
-                _pick(["加一条回归线", "拟合回归直线", "添加线性回归", "画出回归拟合线", "加上线性趋势线"]),
+                pick(["加一条回归线", "拟合回归直线", "添加线性回归", "画出回归拟合线", "加上线性趋势线"]),
             ))
         elif show_reg:
             candidates.append((
                 {"params_show_regression": False},
-                _pick(["去掉回归线", "不显示拟合线", "删掉回归拟合线", "取消回归线", "回归线不要了"]),
+                pick(["去掉回归线", "不显示拟合线", "删掉回归拟合线", "取消回归线", "回归线不要了"]),
             ))
 
     elif chart_type == "box":
@@ -361,40 +369,40 @@ def _rule_candidates(
         if show_pts != "all":
             candidates.append((
                 {"params_show_points": "all"},
-                _pick(["显示所有数据点", "把散点全画出来", "除箱线外也显示原始数据点", "每个数据点都画出来", "jitter点全部显示"]),
+                pick(["显示所有数据点", "把散点全画出来", "除箱线外也显示原始数据点", "每个数据点都画出来", "jitter点全部显示"]),
             ))
         if show_pts != "none":
             candidates.append((
                 {"params_show_points": "none"},
-                _pick(["不显示任何数据点", "隐藏散点，只保留箱线", "散点全部隐藏", "只显示箱线图轮廓", "数据点都隐藏掉"]),
+                pick(["不显示任何数据点", "隐藏散点，只保留箱线", "散点全部隐藏", "只显示箱线图轮廓", "数据点都隐藏掉"]),
             ))
         notch = spec.get("params_notch", False)
         candidates.append((
             {"params_notch": not notch},
-            _pick(["换成缺口箱线图", "加上缺口notch", "改为notch箱线图", "箱线图加缺口", "使用带notch的箱线图"]) if not notch
-            else _pick(["取消缺口箱线图", "恢复普通箱线图", "去掉notch缺口", "改回标准箱线图", "取消箱线图notch"]),
+            pick(["换成缺口箱线图", "加上缺口notch", "改为notch箱线图", "箱线图加缺口", "使用带notch的箱线图"]) if not notch
+            else pick(["取消缺口箱线图", "恢复普通箱线图", "去掉notch缺口", "改回标准箱线图", "取消箱线图notch"]),
         ))
 
     elif chart_type == "heatmap":
         annot = spec.get("params_annot", True)
         candidates.append((
             {"params_annot": not annot},
-            _pick(["热力图格子里不显示数值", "隐藏数值标注", "格子里数字去掉", "取消热力图数值显示", "不要在格子里标数字"]) if annot
-            else _pick(["热力图格子显示数值", "加上数值标注", "格子里显示具体数值", "每个格子标注数值", "在热力图上显示数字"]),
+            pick(["热力图格子里不显示数值", "隐藏数值标注", "格子里数字去掉", "取消热力图数值显示", "不要在格子里标数字"]) if annot
+            else pick(["热力图格子显示数值", "加上数值标注", "格子里显示具体数值", "每个格子标注数值", "在热力图上显示数字"]),
         ))
         current_fmt = spec.get("params_annot_fmt", ".2f")
         if current_fmt == ".2f":
             candidates.append((
                 {"params_annot_fmt": ".1f"},
-                _pick(["数值保留一位小数", "精度改为1位小数", "小数位数改为1位", "数字精度调整为一位小数", "改成保留一位小数"]),
+                pick(["数值保留一位小数", "精度改为1位小数", "小数位数改为1位", "数字精度调整为一位小数", "改成保留一位小数"]),
             ))
         else:
             candidates.append((
                 {"params_annot_fmt": ".2f"},
-                _pick(["数值保留两位小数", "精度改为2位小数", "改为2位小数精度", "数字保留两位小数", "小数位数改为2位"]),
+                pick(["数值保留两位小数", "精度改为2位小数", "改为2位小数精度", "数字保留两位小数", "小数位数改为2位"]),
             ))
 
-    _RNG.shuffle(candidates)
+    rng.shuffle(candidates)
     return candidates
 
 
@@ -486,7 +494,7 @@ def _call_api_for_deltas(
                     {"role": "user",   "content": user},
                 ],
             )
-            raw = resp.choices[0].message.content.strip()
+            raw    = resp.choices[0].message.content.strip()
             parsed = json.loads(raw)
             if isinstance(parsed, list):
                 return parsed
@@ -507,6 +515,128 @@ def _call_api_for_deltas(
             if attempt < MAX_RETRIES:
                 time.sleep(RETRY_DELAY)
     return None
+
+
+# ---------------------------------------------------------------------------
+# 辅助函数
+# ---------------------------------------------------------------------------
+
+def _preseed_written(path: Path) -> dict[str, int]:
+    """
+    从已有的 delta_pairs.jsonl 中提取已写种子计数，用于 --append 追加模式。
+    记录 ID 格式：{source_id}_d{n}
+    """
+    result: dict[str, int] = {}
+    if not path.exists():
+        return result
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec    = json.loads(line)
+                rec_id = rec.get("id", "")
+                m      = re.match(r"^(.+)_d\d+$", rec_id)
+                if m:
+                    sid         = m.group(1)
+                    result[sid] = result.get(sid, 0) + 1
+            except json.JSONDecodeError:
+                pass
+    return result
+
+
+def _process_one_seed(
+    source: dict,
+    client: OpenAI | None,
+    model: str,
+    delta_system_prompt: str,
+    use_llm: bool,
+    use_rule: bool,
+    rng: random.Random,
+) -> tuple[list[tuple[dict, str]], list[dict]]:
+    """
+    处理单条种子，生成候选 (delta, user_input) 对。
+    返回 (valid_pairs, reject_records)，由调用者负责写文件。
+    线程安全：只读取 _CACHE（不写共享状态）。
+    """
+    source_id    = source.get("id", "")
+    csv_path     = source.get("csv_path", "")
+    current_spec = {k: v for k, v in source.get("plotspec", {}).items() if k != "data_source"}
+    data_context = source.get("data_context", "")
+
+    valid_pairs:    list[tuple[dict, str]] = []
+    reject_records: list[dict]             = []
+
+    try:
+        _, cache_key = load_data(csv_path)
+    except DataLoadError as e:
+        print(f"  ⚠ {source_id}: load_data 失败：{e}")
+        return valid_pairs, reject_records
+    df = _CACHE[cache_key]
+
+    # 规则驱动
+    if use_rule:
+        rule_cands = _rule_candidates(current_spec, df, rng=rng)
+        accepted   = 0
+        for delta, user_input in rule_cands:
+            if accepted >= N_RULE_PER_SPEC:
+                break
+            err = _validate_delta(delta, current_spec, cache_key, df)
+            if err is None:
+                valid_pairs.append((delta, user_input))
+                accepted += 1
+            else:
+                reject_records.append({
+                    "record_type":  "delta_reject",
+                    "source_id":    source_id,
+                    "user_input":   user_input,
+                    "delta":        delta,
+                    "reject_reason": err,
+                })
+
+    # LLM 生成
+    if use_llm and client is not None:
+        csv_name = Path(csv_path).name if csv_path else "unknown.csv"
+        user_msg = _build_delta_user_message(data_context, current_spec, csv_name)
+        pairs    = _call_api_for_deltas(client, model, delta_system_prompt, user_msg)
+        if pairs is None:
+            print(f"  ⚠ {source_id}: LLM API 全部失败，跳过 LLM 部分")
+        else:
+            for pair in pairs:
+                if not isinstance(pair, dict):
+                    reject_records.append({
+                        "record_type":  "delta_reject",
+                        "source_id":    source_id,
+                        "user_input":   "",
+                        "delta":        {},
+                        "reject_reason": f"LLM返回格式非dict：{str(pair)[:120]}",
+                    })
+                    continue
+                delta      = pair.get("delta", {})
+                user_input = pair.get("user_input", "")
+                if not user_input or not isinstance(delta, dict):
+                    reject_records.append({
+                        "record_type":  "delta_reject",
+                        "source_id":    source_id,
+                        "user_input":   user_input,
+                        "delta":        delta if isinstance(delta, dict) else {},
+                        "reject_reason": "缺少 user_input 或 delta 字段",
+                    })
+                    continue
+                err = _validate_delta(delta, current_spec, cache_key, df)
+                if err is None:
+                    valid_pairs.append((delta, user_input))
+                else:
+                    reject_records.append({
+                        "record_type":  "delta_reject",
+                        "source_id":    source_id,
+                        "user_input":   user_input,
+                        "delta":        delta,
+                        "reject_reason": err,
+                    })
+
+    return valid_pairs, reject_records
 
 
 # ---------------------------------------------------------------------------
@@ -544,9 +674,9 @@ def _validate_delta(
         return "delta 没有实际改变任何字段（no-op）"
 
     # 合并后完整校验
-    merged = merge_delta(current_spec, delta)
+    merged          = merge_delta(current_spec, delta)
     spec_with_source = fill_defaults({**merged, "data_source": cache_key})
-    result = validate(spec_with_source)
+    result          = validate(spec_with_source)
     if not result.ok:
         parts = []
         if result.missing_required:
@@ -555,8 +685,8 @@ def _validate_delta(
             parts.append(f"类型错误：{result.type_errors}")
         return "合并后 validate 失败：" + "；".join(parts)
 
-    df_cols = set(df.columns)
-    col_err = _check_col_exists(spec_with_source, df_cols)
+    df_cols  = set(df.columns)
+    col_err  = _check_col_exists(spec_with_source, df_cols)
     if col_err:
         return col_err
 
@@ -578,6 +708,7 @@ def generate_delta_pairs(
     use_llm: bool,
     use_rule: bool,
     append: bool,
+    workers: int = 1,
 ) -> None:
     """
     从 valid_pairs.jsonl 的首轮记录出发，生成修改轮训练数据，
@@ -605,7 +736,12 @@ def generate_delta_pairs(
         all_seeds = all_seeds[:source_limit]
 
     print(f"读取 {len(all_seeds)} 条首轮记录作为种子")
-    print(f"目标：{target} 条修改轮样本  LLM={'开' if use_llm else '关'}  规则={'开' if use_rule else '关'}\n")
+    print(
+        f"目标：{target} 条修改轮样本  "
+        f"LLM={'开' if use_llm else '关'}  "
+        f"规则={'开' if use_rule else '关'}  "
+        f"并发={workers}\n"
+    )
 
     llm_client: OpenAI | None = None
     if use_llm:
@@ -619,144 +755,148 @@ def generate_delta_pairs(
     delta_system_prompt = _build_delta_system_prompt()
     written_count = 0
     total_rejected = 0
-    seed_written: dict[str, int] = {}  # 每条种子已写出的样本数
 
-    mode = "a" if append else "w"
+    # --append 时：从已有文件读取已用种子数量，避免重复超过 MAX_PER_SEED
+    seed_written: dict[str, int] = _preseed_written(DELTA_PAIRS_PATH) if append else {}
+    if append and seed_written:
+        total_existing = sum(seed_written.values())
+        print(f"追加模式：检测到已有 {total_existing} 条记录（{len(seed_written)} 个种子已使用）")
+
+    mode         = "a" if append else "w"
     seed_records = list(all_seeds)
     _RNG.shuffle(seed_records)
     seed_idx = 0
     n_cycles = 0
 
+    def _get_next_seed() -> dict | None:
+        """从 seed_records 中取下一个未饱和的种子，按需循环。主线程调用，非线程安全。"""
+        nonlocal seed_idx, n_cycles
+        while True:
+            if seed_idx >= len(seed_records):
+                if all(seed_written.get(s.get("id", ""), 0) >= MAX_PER_SEED for s in seed_records):
+                    return None
+                n_cycles += 1
+                if n_cycles >= MAX_CYCLES:
+                    return None
+                seed_idx = 0
+                _RNG.shuffle(seed_records)
+            source = seed_records[seed_idx]
+            seed_idx += 1
+            if seed_written.get(source.get("id", ""), 0) < MAX_PER_SEED:
+                return source
+
+    def _write_results(
+        source: dict,
+        valid_pairs: list[tuple[dict, str]],
+        reject_records_list: list[dict],
+        fout,
+        frej,
+    ) -> None:
+        """写出一批结果；调用者需持有 write_lock（并发路径）或在主线程中调用（顺序路径）。"""
+        nonlocal written_count, total_rejected
+        source_id    = source.get("id", "")
+        csv_path     = source.get("csv_path", "")
+        current_spec = {k: v for k, v in source.get("plotspec", {}).items() if k != "data_source"}
+        data_context = source.get("data_context", "")
+
+        for rej in reject_records_list:
+            frej.write(json.dumps(rej, ensure_ascii=False) + "\n")
+            total_rejected += 1
+
+        for delta, user_input in valid_pairs:
+            if written_count >= target:
+                break
+            if seed_written.get(source_id, 0) >= MAX_PER_SEED:
+                break
+            record = {
+                "id":           f"{source_id}_d{written_count}",
+                "record_type":  "delta",
+                "csv_path":     csv_path,
+                "user_input":   user_input,
+                "current_spec": current_spec,
+                "plotspec":     delta,
+                "data_context": data_context,
+            }
+            fout.write(json.dumps(record, ensure_ascii=False) + "\n")
+            written_count += 1
+            seed_written[source_id] = seed_written.get(source_id, 0) + 1
+
     with (
         DELTA_PAIRS_PATH.open(mode, encoding="utf-8") as fout,
         DELTA_REJECT_LOG_PATH.open(mode, encoding="utf-8") as frej,
     ):
-        while written_count < target:
-            # 循环种子
-            if seed_idx >= len(seed_records):
-                # 若所有种子都已达写出上限，无需继续循环
-                if all(seed_written.get(s.get("id", ""), 0) >= MAX_PER_SEED for s in seed_records):
+        if workers <= 1:
+            # ── 顺序执行 ──────────────────────────────────────────────
+            while written_count < target:
+                source = _get_next_seed()
+                if source is None:
                     remaining = target - written_count
-                    print(f"  ⚠ 所有种子已达上限（{MAX_PER_SEED} 条/种子），仍差 {remaining} 条，停止")
+                    print(f"  ⚠ 种子已耗尽或达到循环上限，仍差 {remaining} 条，停止")
                     break
-                n_cycles += 1
-                if n_cycles >= MAX_CYCLES:
-                    remaining = target - written_count
-                    print(f"  ⚠ 已循环 {n_cycles} 轮种子，仍差 {remaining} 条，停止")
-                    break
-                seed_idx = 0
-                _RNG.shuffle(seed_records)
 
-            source = seed_records[seed_idx]
-            seed_idx += 1
-            source_id = source.get("id", f"seed_{seed_idx}")
+                source_id = source.get("id", "")
+                rng       = random.Random(hash(source_id))
+                valid_pairs, reject_records_list = _process_one_seed(
+                    source, llm_client, model, delta_system_prompt, use_llm, use_rule, rng,
+                )
+                _write_results(source, valid_pairs, reject_records_list, fout, frej)
 
-            # 跳过已达上限的种子
-            if seed_written.get(source_id, 0) >= MAX_PER_SEED:
-                continue
-            csv_path = source.get("csv_path", "")
-            current_spec = {
-                k: v for k, v in source.get("plotspec", {}).items()
-                if k != "data_source"
-            }
-            data_context = source.get("data_context", "")
+                if written_count > 0 and written_count % 20 == 0:
+                    print(f"  进度：{written_count}/{target} 条已写入 ...")
 
-            # 加载 CSV
-            try:
-                _, cache_key = load_data(csv_path)
-            except DataLoadError as e:
-                print(f"  ⚠ {source_id}: load_data 失败：{e}")
-                continue
-            df = _CACHE[cache_key]
+        else:
+            # ── 并发执行 ──────────────────────────────────────────────
+            write_lock:       threading.Lock   = threading.Lock()
+            futures_to_source: dict            = {}
 
-            round_candidates: list[tuple[dict, str]] = []
+            with ThreadPoolExecutor(max_workers=workers) as executor:
 
-            # ── 规则驱动 ──────────────────────────────────────────────
-            if use_rule:
-                rule_cands = _rule_candidates(current_spec, df)
-                accepted = 0
-                for delta, user_input in rule_cands:
-                    if accepted >= N_RULE_PER_SPEC:
+                def _submit_next() -> bool:
+                    """提交下一个种子任务；返回是否成功提交。主线程调用。"""
+                    next_src = _get_next_seed()
+                    if next_src is None:
+                        return False
+                    src_id = next_src.get("id", "")
+                    rng    = random.Random(hash(src_id))
+                    fut    = executor.submit(
+                        _process_one_seed, next_src, llm_client, model,
+                        delta_system_prompt, use_llm, use_rule, rng,
+                    )
+                    futures_to_source[fut] = next_src
+                    return True
+
+                # 初始填满线程池
+                for _ in range(workers):
+                    if written_count >= target:
                         break
-                    err = _validate_delta(delta, current_spec, cache_key, df)
-                    if err is None:
-                        round_candidates.append((delta, user_input))
-                        accepted += 1
-                    else:
-                        frej.write(json.dumps({
-                            "record_type": "delta_reject",
-                            "source_id": source_id,
-                            "user_input": user_input,
-                            "delta": delta,
-                            "reject_reason": err,
-                        }, ensure_ascii=False) + "\n")
-                        total_rejected += 1
+                    if not _submit_next():
+                        break
 
-            # ── LLM 生成 ──────────────────────────────────────────────
-            if use_llm and llm_client is not None:
-                csv_name = Path(csv_path).name if csv_path else "unknown.csv"
-                user_msg = _build_delta_user_message(data_context, current_spec, csv_name)
-                pairs = _call_api_for_deltas(llm_client, model, delta_system_prompt, user_msg)
-                if pairs is None:
-                    print(f"  ⚠ {source_id}: LLM API 全部失败，跳过 LLM 部分")
-                else:
-                    for pair in pairs:
-                        if not isinstance(pair, dict):
-                            frej.write(json.dumps({
-                                "record_type": "delta_reject",
-                                "source_id": source_id,
-                                "user_input": "",
-                                "delta": {},
-                                "reject_reason": f"LLM返回格式非dict：{str(pair)[:120]}",
-                            }, ensure_ascii=False) + "\n")
-                            total_rejected += 1
+                while futures_to_source:
+                    done, _ = cf_wait(list(futures_to_source.keys()), return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        source    = futures_to_source.pop(fut)
+                        source_id = source.get("id", "")
+                        try:
+                            valid_pairs, reject_records_list = fut.result()
+                        except Exception as e:
+                            print(f"  ⚠ {source_id}: 处理异常：{e}")
+                            if written_count < target:
+                                _submit_next()
                             continue
-                        delta = pair.get("delta", {})
-                        user_input = pair.get("user_input", "")
-                        if not user_input or not isinstance(delta, dict):
-                            frej.write(json.dumps({
-                                "record_type": "delta_reject",
-                                "source_id": source_id,
-                                "user_input": user_input,
-                                "delta": delta if isinstance(delta, dict) else {},
-                                "reject_reason": "缺少 user_input 或 delta 字段",
-                            }, ensure_ascii=False) + "\n")
-                            total_rejected += 1
-                            continue
-                        err = _validate_delta(delta, current_spec, cache_key, df)
-                        if err is None:
-                            round_candidates.append((delta, user_input))
-                        else:
-                            frej.write(json.dumps({
-                                "record_type": "delta_reject",
-                                "source_id": source_id,
-                                "user_input": user_input,
-                                "delta": delta,
-                                "reject_reason": err,
-                            }, ensure_ascii=False) + "\n")
-                            total_rejected += 1
 
-            # ── 写出本轮有效样本 ────────────────────────────────────
-            for delta, user_input in round_candidates:
-                if written_count >= target:
-                    break
-                if seed_written.get(source_id, 0) >= MAX_PER_SEED:
-                    break
-                record = {
-                    "id": f"{source_id}_d{written_count}",
-                    "record_type": "delta",
-                    "csv_path": csv_path,
-                    "user_input": user_input,
-                    "current_spec": current_spec,
-                    "plotspec": delta,
-                    "data_context": data_context,
-                }
-                fout.write(json.dumps(record, ensure_ascii=False) + "\n")
-                written_count += 1
-                seed_written[source_id] = seed_written.get(source_id, 0) + 1
+                        with write_lock:
+                            _write_results(source, valid_pairs, reject_records_list, fout, frej)
 
-            if written_count > 0 and written_count % 20 == 0:
-                print(f"  进度：{written_count}/{target} 条已写入 ...")
+                        if written_count > 0 and written_count % 20 == 0:
+                            print(f"  进度：{written_count}/{target} 条已写入 ...")
+
+                        if written_count < target:
+                            _submit_next()
+
+            if written_count < target:
+                remaining = target - written_count
+                print(f"  ⚠ 种子已耗尽或达到循环上限，仍差 {remaining} 条，停止")
 
     print(f"\n完成：写入 {written_count} 条修改轮样本，{total_rejected} 条被拒绝")
     print(f"输出：{DELTA_PAIRS_PATH}")
@@ -793,7 +933,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--append", action="store_true",
-        help="追加到已有的 delta_pairs.jsonl，而非覆盖",
+        help="追加到已有的 delta_pairs.jsonl，自动识别已用种子，从剩余容量继续",
+    )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="并发线程数（默认 1，推荐 4~8 加速 LLM 调用）",
     )
     args = parser.parse_args()
 
@@ -808,6 +952,7 @@ def main() -> None:
         use_llm=not args.no_llm,
         use_rule=not args.no_rule,
         append=args.append,
+        workers=args.workers,
     )
 
 

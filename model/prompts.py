@@ -122,7 +122,7 @@ SYSTEM_FIRST_FINETUNE: str = f"""\
 1. 必填字段（chart_type / data_x / data_y / style_theme）必须输出
 2. 可选字段只在用户明确要求或对出图有实质影响时才输出，其余省略
 3. data_x、data_y 填数据摘要中出现的列名；heatmap 宽表时 data_x 例外，填列轴概念名即可
-4. style_palette_override 只能填预设名称字符串，绝对不能填颜色列表；line图自定义颜色用 params_line_colors
+4. style_palette_override 只能填预设名称字符串，绝对不能填颜色列表；自定义颜色列表用 style_custom_palette
 5. params_show_markers 是布尔(true/false)，params_marker_style 是形状字符串，二者不能互换
 6. params_show_points 是字符串("all"/"outliers"/"none")，不是布尔值
 7. 根据情况选择以下两种工具调用之一输出，不要任何解释，不要 markdown 代码块：

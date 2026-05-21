@@ -14,6 +14,7 @@ scripts/gen_pairs.py
 用法：
     # 基础模式
     python scripts/gen_pairs.py
+    python scripts/gen_pairs.py --workers 8      # 8 个并发线程（加速，默认 1）
     python scripts/gen_pairs.py --limit 2        # 只处理前 2 个 CSV（测试）
     python scripts/gen_pairs.py --append         # 追加而非覆盖 raw_pairs.jsonl
 
@@ -26,7 +27,7 @@ scripts/gen_pairs.py
 
 环境变量：
     DEEPSEEK_API_KEY   DeepSeek API 密钥（必须）
-    DEEPSEEK_MODEL     模型名称（默认 deepseek-chat）
+    DEEPSEEK_MODEL     模型名称（默认 deepseek-v4-pro）
 """
 
 from __future__ import annotations
@@ -35,7 +36,9 @@ import argparse
 import json
 import os
 import random
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -68,7 +71,7 @@ MAX_RETRIES = 3
 RETRY_DELAY = 5.0
 
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-_DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+_DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro")
 
 _SUPP_RNG = random.Random(99)   # 补充模式随机源（固定种子保证可复现）
 
@@ -98,16 +101,16 @@ def _build_synthesis_system_prompt() -> str:
 主题配色已自动为不同分组分配不同颜色，绝大多数情况不需要额外指定颜色字段。
 只在以下场景才输出颜色字段，其余一律不输出：
 
-  场景A：用户明确指定了每条线的具体颜色 → 用 params_line_colors（仅 line 图）
-    ✓ "第一条线用红色，第二条用蓝色"
-    ✓ "颜色依次用 #E64B35、#4DBBD5、#00A087"
-    ✗ "每个模型用不同颜色的线" ← 主题自动处理，禁止输出 params_line_colors
+  场景A：用户明确给出了具体十六进制颜色列表 → 用 style_custom_palette（适用所有图表类型）
+    ✓ "颜色依次用 #E64B35、#4DBBD5、#00A087"（值为列表：["#E64B35","#4DBBD5","#00A087"]）
+    ✗ "每个模型用不同颜色" ← 主题自动处理，禁止输出 style_custom_palette
+    ✗ "第一条线用红色" ← 描述性颜色名而非十六进制列表，也不输出
 
-  场景B：用户要求切换整套配色方案 → 用 style_palette_override
+  场景B：用户要求切换整套预设配色方案 → 用 style_palette_override
     ✓ "换成 tab10 配色"、"用莫兰迪色系"、"换一套更鲜艳的颜色"
     ✗ "用不同颜色区分" ← 不属于切换配色方案，禁止输出 style_palette_override
 
-  既未指定具体颜色、也未要求换配色方案 → 两个字段都不输出
+  既未指定具体十六进制颜色、也未要求换配色方案 → 两个字段都不输出
     ✗ "不同颜色的线"、"颜色区分开"、"每组一种颜色" ← 全部不需要输出颜色字段
 
 【字段组合约束——以下组合语义无效，绝对不能出现】
@@ -141,8 +144,10 @@ def _build_synthesis_system_prompt() -> str:
 4. 可选字段使用多样：
    · 至少 1 条使用 data_group_by（若数据有分类列）
    · 至少 1 条指定 label_title 和 label_y
-   · 至少 1 条使用坐标轴参数（axes_y_min 或 axes_x_tick_rotation 等）
-   · 适当使用 params_sort / params_show_values / params_smooth 等图表专属参数
+   · 至少 1 条使用坐标轴参数（axes_y_min 或 axes_x_rotate_labels 等）
+   · 至少 1 条使用 data_filter 按类别或数值条件筛选数据行（若数据有合适的分类/数值列）
+     示例：data_filter="benchmark == 'MMLU'"  data_filter="epoch >= 10"
+   · 适当使用 params_sort / params_show_values / params_smooth / params_stacked 等图表专属参数
 
 5. user_input 必须用中文，长度 15-120 字，禁止用相同的句式重复
 
@@ -295,10 +300,57 @@ def _validate_pair_structure(pair: object) -> str | None:
     return None
 
 
+def _process_csv_file(
+    csv_path: Path,
+    idx: int,
+    total: int,
+    client: OpenAI,
+    model: str,
+    system_prompt: str,
+) -> tuple[list[dict], int]:
+    """
+    处理单个 CSV：加载数据 → 调用 API → 结构校验。
+    返回 (有效记录列表, 跳过数量)。
+    线程安全：client 本身是线程安全的，无共享可变状态。
+    """
+    label = f"[{idx}/{total}] {csv_path.name}"
+    try:
+        data_context, _ = load_data(str(csv_path))
+    except Exception as e:
+        print(f"{label}  ✗ load_data 失败：{e}")
+        return [], 0
+
+    user_msg = _build_synthesis_user_message(csv_path, data_context)
+    pairs = _call_with_retry(client, model, system_prompt, user_msg)
+
+    if pairs is None:
+        print(f"{label}  ✗ API 调用全部失败，跳过")
+        return [], 0
+
+    records: list[dict] = []
+    skipped = 0
+    for j, pair in enumerate(pairs):
+        err = _validate_pair_structure(pair)
+        if err:
+            print(f"{label}  ⚠ pair[{j}] 结构检查失败：{err}")
+            skipped += 1
+            continue
+        records.append({
+            "id": f"{csv_path.stem}_{j}",
+            "csv_path": str(csv_path),
+            "user_input": pair["user_input"],
+            "plotspec": pair["plotspec"],
+        })
+
+    print(f"{label}  ✓ {len(records)}/{len(pairs)} 条有效（跳过 {skipped} 条）")
+    return records, skipped
+
+
 def generate_pairs(
     csv_paths: list[Path],
     model: str,
     append: bool = False,
+    workers: int = 1,
 ) -> None:
     """
     为给定的 CSV 文件列表生成配对，写入 RAW_PAIRS_PATH。
@@ -307,48 +359,56 @@ def generate_pairs(
         csv_paths: 待处理的 CSV 文件路径列表。
         model:     DeepSeek 模型名称。
         append:    True=追加写入，False=覆盖写入。
+        workers:   并发线程数（默认 1=顺序执行）。
+                   建议值：4~8（受 DeepSeek API 并发限制）。
     """
-    client, model = _get_client(model)
+    client, _ = _get_client(model)
     system_prompt = _build_synthesis_system_prompt()
+    total = len(csv_paths)
 
     mode = "a" if append else "w"
     total_written = 0
     total_skipped = 0
 
     with RAW_PAIRS_PATH.open(mode, encoding="utf-8") as fout:
-        for i, csv_path in enumerate(csv_paths, 1):
-            print(f"[{i}/{len(csv_paths)}] {csv_path.name}")
-            try:
-                data_context, _ = load_data(str(csv_path))
-            except Exception as e:
-                print(f"  ✗ load_data 失败：{e}")
-                continue
+        if workers <= 1:
+            # ── 顺序模式（原有行为）──────────────────────────────────────
+            for i, csv_path in enumerate(csv_paths, 1):
+                records, skipped = _process_csv_file(
+                    csv_path, i, total, client, model, system_prompt
+                )
+                total_skipped += skipped
+                for r in records:
+                    fout.write(json.dumps(r, ensure_ascii=False) + "\n")
+                total_written += len(records)
+        else:
+            # ── 并发模式 ─────────────────────────────────────────────────
+            # fout 的写入操作通过 write_lock 串行化，其余（API 调用、解析）并发执行
+            write_lock = threading.Lock()
+            print(f"并发模式：{workers} 个线程同时处理 {total} 个 CSV\n")
 
-            user_msg = _build_synthesis_user_message(csv_path, data_context)
-            pairs = _call_with_retry(client, model, system_prompt, user_msg)
+            futures: dict = {}
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                for i, csv_path in enumerate(csv_paths, 1):
+                    fut = executor.submit(
+                        _process_csv_file,
+                        csv_path, i, total, client, model, system_prompt,
+                    )
+                    futures[fut] = csv_path
 
-            if pairs is None:
-                print(f"  ✗ API 调用全部失败，跳过")
-                continue
+                for fut in as_completed(futures):
+                    try:
+                        records, skipped = fut.result()
+                    except Exception as exc:
+                        csv_path = futures[fut]
+                        print(f"  ✗ {csv_path.name} 线程异常：{exc}")
+                        continue
 
-            written = 0
-            for j, pair in enumerate(pairs):
-                err = _validate_pair_structure(pair)
-                if err:
-                    print(f"  ⚠ pair[{j}] 结构检查失败：{err}")
-                    total_skipped += 1
-                    continue
-                record = {
-                    "id": f"{csv_path.stem}_{j}",
-                    "csv_path": str(csv_path),
-                    "user_input": pair["user_input"],
-                    "plotspec": pair["plotspec"],
-                }
-                fout.write(json.dumps(record, ensure_ascii=False) + "\n")
-                written += 1
-
-            total_written += written
-            print(f"  ✓ 写入 {written}/{len(pairs)} 条（跳过 {len(pairs)-written} 条）")
+                    with write_lock:
+                        for r in records:
+                            fout.write(json.dumps(r, ensure_ascii=False) + "\n")
+                        total_written += len(records)
+                        total_skipped += skipped
 
     print(f"\n完成：总写入 {total_written} 条，结构检查跳过 {total_skipped} 条。")
     print(f"输出文件：{RAW_PAIRS_PATH}")
@@ -659,6 +719,10 @@ def main() -> None:
         "--append", action="store_true",
         help="追加到已有的 raw_pairs.jsonl，而非覆盖（仅基础模式有效）",
     )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="并发线程数（默认 1=顺序；建议 4~8，受 DeepSeek API 并发限制）",
+    )
 
     # 补充模式参数
     parser.add_argument(
@@ -709,7 +773,7 @@ def main() -> None:
         print(f"每个 CSV 生成：{N_PAIRS_PER_CSV} 条配对")
         print(f"输出：{RAW_PAIRS_PATH}\n")
 
-        generate_pairs(csv_paths, model=args.model, append=args.append)
+        generate_pairs(csv_paths, model=args.model, append=args.append, workers=args.workers)
 
 
 if __name__ == "__main__":
