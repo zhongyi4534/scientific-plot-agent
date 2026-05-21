@@ -1,4 +1,4 @@
-system,request_id,latency_ms,batch_size
+system,request_id,time_ms,batch_size
 SystemA,1,10.73,4
 SystemA,2,21.28,8
 SystemA,3,11.58,1

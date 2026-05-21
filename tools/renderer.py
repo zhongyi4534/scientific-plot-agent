@@ -398,6 +398,9 @@ def _render_scatter(
     fig, ax = _prepare_axes(spec, theme, layout)
 
     def _draw_regression(x_vals: np.ndarray, y_vals: np.ndarray, color: str) -> None:
+        # 非数值型 x（如类别字符串列）无法拟合回归线，静默跳过
+        if not np.issubdtype(x_vals.dtype, np.number):
+            return
         coef = np.polyfit(x_vals, y_vals, 1)
         x_line = np.linspace(x_vals.min(), x_vals.max(), 100)
         ax.plot(x_line, np.poly1d(coef)(x_line), "--",
@@ -435,13 +438,24 @@ def _render_box(
     show_points = spec.get("params_show_points", "outliers")
     notch = spec.get("params_notch", False)
 
+    # data_y 是列表时 melt 为长表：_metric 作为 hue 区分各指标，原 x_col 保持为分组轴
+    if isinstance(y_col, list):
+        df = df.melt(id_vars=[x_col], value_vars=y_col,
+                     var_name="_metric", value_name="_value")
+        y_col = "_value"
+        hue_col = "_metric"
+    else:
+        # hue=x_col：触发 seaborn ≥0.13 的按分类着色逻辑，抑制 FutureWarning
+        hue_col = x_col
+
     fig, ax = _prepare_axes(spec, theme, layout)
     flierprops = {"marker": ""} if show_points == "none" else {}
 
-    # hue=x_col 配合 palette 避免 seaborn ≥0.13 的 FutureWarning；legend=False 不重复显示图例
-    sns.boxplot(data=df, x=x_col, y=y_col, hue=x_col, notch=notch,
+    # hue_col == x_col 时图例与 x 轴重复，不显示；hue_col == "_metric" 时显示以区分指标
+    show_legend = hue_col != x_col
+    sns.boxplot(data=df, x=x_col, y=y_col, hue=hue_col, notch=notch,
                 palette=theme.palette, linewidth=theme.line_width,
-                width=layout.bar_width, legend=False,
+                width=layout.bar_width, legend=show_legend,
                 flierprops=flierprops, ax=ax)
 
     if show_points == "all":

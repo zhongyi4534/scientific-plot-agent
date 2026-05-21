@@ -1,4 +1,4 @@
-method,k_shot,accuracy,F1
+system,k_shot,accuracy,F1
 Prompt-tuning,0,59.14,58.01
 Prompt-tuning,1,63.5,62.1
 Prompt-tuning,2,65.57,63.86

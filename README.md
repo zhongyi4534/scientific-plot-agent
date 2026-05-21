@@ -24,18 +24,18 @@ scientific-plot-agent/
 ├── ui/
 │   └── app.py             # C线：Gradio 界面
 ├── scripts/
-│   ├── run_synthesis.py   # 一键运行完整训练数据合成流水线
-│   ├── gen_csv.py         # 步骤1：生成 51 个场景训练 CSV
-│   ├── gen_pairs.py       # 步骤2：调用 DeepSeek API 合成配对
-│   ├── validate_pairs.py  # 步骤3：三级校验过滤
-│   ├── pack_finetune.py   # 步骤4：打包为 Qwen3 微调 JSONL
-│   └── 需要合成的场景.md   # 34 个训练场景设计文档
+│   ├── run_synthesis.py   # 一键运行完整训练数据合成流水线（五步）
+│   ├── gen_csv.py         # 步骤1：生成 64 个场景训练 CSV
+│   ├── gen_pairs.py       # 步骤2：调用 DeepSeek API 合成首轮配对
+│   ├── validate_pairs.py  # 步骤3：四级校验过滤（字段+列名+语义+渲染）
+│   ├── gen_delta.py       # 步骤4：生成修改轮 (user_input, delta) 配对
+│   └── pack_finetune.py   # 步骤5：合并首轮+修改轮，打包为 Qwen3 微调 JSONL
 ├── data/
 │   ├── example_bar.csv    # 示例数据（提交到 git）
 │   ├── example_line.csv   # 示例数据（提交到 git）
 │   ├── long_*.csv / wide_*.csv  # 集成测试用数据
-│   ├── train/             # 微调训练原始 CSV（51 个，由 gen_csv.py 生成）
-│   ├── pairs/             # 合成中间文件（raw/valid/reject JSONL）
+│   ├── train/             # 微调训练原始 CSV（64 个，由 gen_csv.py 生成）
+│   ├── pairs/             # 合成中间文件（raw/valid/delta/reject JSONL）
 │   └── finetune/          # 最终微调数据（train.jsonl / val.jsonl）
 ├── tests/                 # 单元测试 + 集成测试
 ├── conftest.py            # pytest 全局配置
@@ -77,14 +77,17 @@ python ui/app.py
 在 `.env` 中配置好 `DEEPSEEK_API_KEY` 后：
 
 ```bash
-# 快速测试（只处理 2 个 CSV，跳过渲染校验）
-python scripts/run_synthesis.py --limit 2 --no-render
+# 快速测试（只处理 2 个 CSV，跳过渲染校验，修改轮只用规则驱动）
+python scripts/run_synthesis.py --limit 2 --no-render --delta-no-llm
 
-# 完整运行（约 51 个 CSV × 5 条 = 255 条配对）
+# 完整运行（64 个 CSV × 5 条 = 约 320 条首轮配对 + 约 200 条修改轮配对）
 python scripts/run_synthesis.py --model deepseek-chat
+
+# 跳过 CSV 生成（data/train/ 已存在时）
+python scripts/run_synthesis.py --skip-csv --model deepseek-chat
 ```
 
-四步流水线自动依次执行：生成CSV → 合成配对 → 校验过滤 → 打包 JSONL。
+五步流水线自动依次执行：生成CSV → 合成首轮配对 → 四级校验过滤 → 生成修改轮配对 → 打包 JSONL。
 最终训练集输出到 `data/finetune/train.jsonl`，验证集到 `data/finetune/val.jsonl`。
 
 ---
@@ -93,7 +96,9 @@ python scripts/run_synthesis.py --model deepseek-chat
 
 ### A线（`model/generator.py`）
 
-**当前状态**：Plan B 实现——通过 DeepSeek API（OpenAI 兼容接口）将用户意图转化为 PlotSpec JSON。未来可替换为本地 LoRA 微调模型，接口签名不变。
+**当前状态**：Plan B 实现——通过 DeepSeek API（OpenAI 兼容接口，模型 `deepseek-chat`）将用户意图转化为 PlotSpec JSON。首轮和修改轮使用不同的 system prompt，few-shot 示例内嵌在 prompt 中，已可正常运行。
+
+Plan A（最终目标）：Qwen3-1.5B LoRA 微调本地模型，尚未完成。替换时只改 `generator.py` 函数体，接口签名不变；训练数据合成流水线（`scripts/`）已就绪。
 
 ```python
 def generate_spec(
@@ -105,19 +110,23 @@ def generate_spec(
 ```
 
 - 首轮（`current_spec=None`）：返回包含所有 `REQUIRED_FIELDS` 的完整 PlotSpec dict。
-- 修改轮：返回仅含变更字段的 delta dict，由 `merger.py` 合并。
+- 修改轮（`current_spec` 不为 None）：返回仅含变更字段的 delta dict，由 `merger.py` 合并。
 - **只替换函数体，不修改签名。**
 - 调试：设置 `DEBUG = True`（默认开启）可在终端打印每次 API 的原始响应。
 
 ### B线（`tools/renderer.py`）
 
-**当前状态**：5 种图表类型（bar / line / scatter / box / heatmap）已完整实现。
+**当前状态**：5 种图表类型（bar / line / scatter / box / heatmap）已完整实现，8 套视觉主题已完整实现。
 
 ```python
 def render_plot(spec: dict, data_source: str) -> str: ...
 ```
 
-通过 `tools/themes.py` 的 `apply_theme()` 获取静态 `ThemeConfig`（风格），再由 `tools/layout.py` 的 `compute_layout()` 根据数据规模计算动态 `LayoutParams`（尺寸/图例/刻度旋转），最后按 spec 参数渲染对应图表，输出 PNG 到 `output/` 目录。
+渲染流水线：`apply_theme()` 从 `tools/themes.py` 读取静态 `ThemeConfig`（配色/字体/轴脊等）→ `apply_style_overrides()` 将 spec 中的 `style_*` 字段覆写到 ThemeConfig → `compute_layout()` 根据数据规模动态计算 `LayoutParams`（图幅尺寸/字号/柱宽/刻度旋转/图例位置）→ 子渲染器绘图 → 统一调用 `_apply_theme_to_fig()` 处理图例、刻度和样式。
+
+**X 轴标签自适应**：不指定旋转角度时，渲染完成后测量实际标签宽度，间距不足时自动旋转（30°–45°）或缩小字号（由 `axes_x_rotate_labels` 控制，默认缩字号）。
+
+> `data_filter`（pandas query 过滤）当前仅在 heatmap 中实现，其他图表类型的该字段填写后不生效。
 
 ### C线（`system/agent.py` + `ui/app.py`）
 
@@ -126,8 +135,10 @@ def render_plot(spec: dict, data_source: str) -> str: ...
 UI 功能：
 - 上传 CSV → 展示数据摘要
 - 自然语言输入 → 调用 LLM → 渲染图表
-- 底部 PlotSpec 编辑区：**可直接修改 JSON 字段，点击「重新渲染」即时生效**（不经过 LLM）
+- 底部 PlotSpec 编辑区：**可直接修改 JSON 字段，点击「重新渲染」即时生效**（不经过 LLM，由 `render_from_spec()` 处理）
 - 重置按钮清空所有状态
+
+待完善：导出 PNG 按钮尚未绑定实际文件路径（`app.py` 中有注释说明实现方式）；发送后不自动清空输入框（`app.py` 中同样有注释说明）。
 
 ---
 
@@ -149,7 +160,7 @@ UI 功能：
 |------|--------|------|------|
 | `data_group_by` | `null` | 分组列名，用于多系列图表 | 全部 |
 | `data_error` | `null` | 误差棒列名 | bar, line |
-| `data_filter` | `null` | 行过滤条件（pandas query 语法） | 全部 |
+| `data_filter` | `null` | 行过滤条件（pandas query 语法）；**当前仅 heatmap 渲染器实际生效** | 全部（计划） |
 | `label_title` | `""` | 图表标题 | 全部 |
 | `label_x` / `label_y` | `""` | 坐标轴标签 | 全部 |
 | `axes_y_min` / `axes_y_max` | `null` | Y 轴范围 | 全部 |

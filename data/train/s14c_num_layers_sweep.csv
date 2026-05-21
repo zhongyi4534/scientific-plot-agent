@@ -1,4 +1,4 @@
-num_layers,val_acc
+num_layers,validation_acc
 2,83.24
 4,84.7
 6,85.23

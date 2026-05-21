@@ -1,0 +1,31 @@
+method,task,AUC
+ResNet-50,Pneumonia,0.908
+ResNet-50,COVID-19,0.868
+ResNet-50,Diabetic Retinopathy,0.939
+ResNet-50,Skin Cancer,0.858
+ResNet-50,ECG-Afib,0.95
+ResNet-50,Breast Cancer,0.888
+DenseNet-121,Pneumonia,0.91
+DenseNet-121,COVID-19,0.885
+DenseNet-121,Diabetic Retinopathy,0.954
+DenseNet-121,Skin Cancer,0.875
+DenseNet-121,ECG-Afib,0.982
+DenseNet-121,Breast Cancer,0.91
+EfficientNet-B4,Pneumonia,0.927
+EfficientNet-B4,COVID-19,0.906
+EfficientNet-B4,Diabetic Retinopathy,0.964
+EfficientNet-B4,Skin Cancer,0.881
+EfficientNet-B4,ECG-Afib,0.981
+EfficientNet-B4,Breast Cancer,0.896
+ViT-B/16,Pneumonia,0.934
+ViT-B/16,COVID-19,0.9
+ViT-B/16,Diabetic Retinopathy,0.948
+ViT-B/16,Skin Cancer,0.885
+ViT-B/16,ECG-Afib,0.991
+ViT-B/16,Breast Cancer,0.906
+ConvNeXt-B,Pneumonia,0.92
+ConvNeXt-B,COVID-19,0.891
+ConvNeXt-B,Diabetic Retinopathy,0.958
+ConvNeXt-B,Skin Cancer,0.896
+ConvNeXt-B,ECG-Afib,0.984
+ConvNeXt-B,Breast Cancer,0.906

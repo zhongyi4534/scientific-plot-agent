@@ -75,7 +75,7 @@ OPTIONAL_DEFAULTS: dict = {
     "params_linestyle": "solid",    # 线型："solid"/"dashed"/"dotted"/"dashdot"；所有线统一
     "params_line_colors": None,     # 按线顺序的颜色列表，如 ["#E64B35","#4DBBD5"]；None=使用主题配色
     "params_marker_style": None,    # 标记样式，如 "o" "s" "^" "D" "v" "P" "*"；None=使用"o"
-    # params_marker_size 无默认值：None 时 LayoutEngine 按数据密度自动计算
+    "params_marker_size": None,     # 标记大小（数值）；None=LayoutEngine 按数据密度自动计算
     # scatter 专属
     "params_alpha": 0.8,
     "params_show_regression": False,

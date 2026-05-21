@@ -1,4 +1,4 @@
-detector,benchmark,mAP
+detector,task,mAP
 Faster-RCNN,COCO-val,43.45
 Faster-RCNN,COCO-test,41.52
 Faster-RCNN,VOC-07,79.92

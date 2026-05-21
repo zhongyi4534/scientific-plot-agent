@@ -52,7 +52,7 @@ MAX_RETRIES = 3              # API 调用失败时的最大重试次数
 RETRY_DELAY = 5.0            # 重试间隔（秒）
 
 _DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-_DEFAULT_MODEL = "deepseek-chat"
+_DEFAULT_MODEL = "deepseek-v4-pro"
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +75,38 @@ def _build_synthesis_system_prompt() -> str:
 - plotspec 中绝对不要包含 data_source 字段（系统自动注入，模型不需要输出）
 - data_x 和 data_y 只能填数据摘要中出现的真实列名，不能填数据值或自己编造的名字
 - 所有字段平铺在顶层，不允许嵌套 dict
+
+【颜色字段使用规则——极易出错，务必遵守】
+主题配色已自动为不同分组分配不同颜色，绝大多数情况不需要额外指定颜色字段。
+只在以下场景才输出颜色字段，其余一律不输出：
+
+  场景A：用户明确指定了每条线的具体颜色 → 用 params_line_colors（仅 line 图）
+    ✓ "第一条线用红色，第二条用蓝色"
+    ✓ "颜色依次用 #E64B35、#4DBBD5、#00A087"
+    ✗ "每个模型用不同颜色的线" ← 主题自动处理，禁止输出 params_line_colors
+
+  场景B：用户要求切换整套配色方案 → 用 style_palette_override
+    ✓ "换成 tab10 配色"、"用莫兰迪色系"、"换一套更鲜艳的颜色"
+    ✗ "用不同颜色区分" ← 不属于切换配色方案，禁止输出 style_palette_override
+
+  既未指定具体颜色、也未要求换配色方案 → 两个字段都不输出
+    ✗ "不同颜色的线"、"颜色区分开"、"每组一种颜色" ← 全部不需要输出颜色字段
+
+【字段组合约束——以下组合语义无效，绝对不能出现】
+
+  ① scatter 图 + 类别型 data_x + params_show_regression: true
+    回归线需要数值型 X 轴，类别型列（如模型名、方法名、数据集名）无法计算。
+    ✓ data_x="epoch"/"lr"/"threshold"（数值型）→ 可用 params_show_regression
+    ✗ data_x="model"/"method"/"dataset"（类别型）→ 禁止 params_show_regression
+
+  ② box 图 + data_y 为列表
+    box 图的 data_y 必须是单个列名字符串，多指标对比用 data_group_by。
+    ✗ "data_y": ["BLEU", "ROUGE-L"]（box图禁止列表）
+    ✓ "data_y": "score", "data_group_by": "metric"（正确做法）
+
+  ③ line 图 + 类别型 data_x + params_smooth: true
+    平滑插值需要数值型 X 轴，类别字符串无法插值。
+    ✗ data_x="model" + params_smooth: true
 
 === 多样性要求（{N_PAIRS_PER_CSV} 个样本必须整体满足）===
 

@@ -1,4 +1,4 @@
-variant,Accuracy,F1
+variant,performance,F1_score
 Full model,93.19,92.49
 w/o attention,89.66,89.04
 w/o position emb,91.78,91.16

@@ -1,4 +1,4 @@
-method,top1_acc,top5_acc,model_size_M,FLOPs_G,img_per_sec
+algorithm,top1_acc,top5_acc,params_M,FLOPs_G,img_per_sec
 MobileNetV3,75.31,92.53,5.5,0.22,3289
 EfficientNet-B0,76.95,93.41,5.3,0.39,2804
 ResNet-50,76.54,92.99,25.6,4.1,1038

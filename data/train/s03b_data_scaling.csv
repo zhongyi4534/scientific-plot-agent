@@ -1,4 +1,4 @@
-approach,n_train,macro_f1
+method,n_train,f1_score
 Baseline,500,55.87
 Baseline,1000,58.09
 Baseline,2000,61.47

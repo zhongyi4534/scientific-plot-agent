@@ -1,4 +1,4 @@
-detector,mAP_50,mAP_75,mAP_50_95,delay_ms
+detector,mAP_50,mAP_75,mAP_50_95,latency_ms
 Faster-RCNN,65.32,48.02,41.28,72.8
 RetinaNet,63.56,46.34,39.55,60.5
 FCOS,64.28,47.28,40.68,54.5

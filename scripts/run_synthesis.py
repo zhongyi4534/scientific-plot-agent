@@ -1,12 +1,13 @@
 """
 scripts/run_synthesis.py
 
-训练数据合成流水线的一键运行脚本。按顺序执行以下四步：
+训练数据合成流水线的一键运行脚本。按顺序执行以下五步：
 
-  步骤 1  gen_csv.py       —— 生成 51 个场景 CSV（含列名随机化）
-  步骤 2  gen_pairs.py     —— 调用 DeepSeek API 合成 (user_input, plotspec) 配对
-  步骤 3  validate_pairs.py —— 三级校验（字段 + 列名 + 渲染）
-  步骤 4  pack_finetune.py  —— 打包为 Qwen3 ChatML 微调 JSONL
+  步骤 1  gen_csv.py        —— 生成场景 CSV（含列名随机化）
+  步骤 2  gen_pairs.py      —— 调用 DeepSeek API 合成首轮 (user_input, plotspec) 配对
+  步骤 3  validate_pairs.py  —— 四级校验（字段 + 列名 + 语义 + 渲染）→ valid_pairs.jsonl
+  步骤 4  gen_delta.py       —— 生成修改轮 (user_input, delta) 配对 → delta_pairs.jsonl
+  步骤 5  pack_finetune.py   —— 合并首轮 + 修改轮，打包为 Qwen3 ChatML 微调 JSONL
 
 前置条件：
   - 在 .env 或环境变量中设置 DEEPSEEK_API_KEY
@@ -14,8 +15,8 @@ scripts/run_synthesis.py
 
 用法示例：
 
-  # 快速测试（只合成 2 个 CSV 的配对，跳过渲染校验）
-  python scripts/run_synthesis.py --limit 2 --no-render
+  # 快速测试（只合成 2 个 CSV 的配对，跳过渲染校验，修改轮只用规则驱动）
+  python scripts/run_synthesis.py --limit 2 --no-render --delta-no-llm
 
   # 完整运行（指定模型）
   python scripts/run_synthesis.py --model deepseek-chat
@@ -23,7 +24,10 @@ scripts/run_synthesis.py
   # 跳过 CSV 生成（data/train/ 已存在时）
   python scripts/run_synthesis.py --skip-csv --model deepseek-chat
 
-  # 只重新打包（已有 valid_pairs.jsonl）
+  # 跳过步骤1-3，只重新生成修改轮并打包
+  python scripts/run_synthesis.py --skip-to-delta
+
+  # 只重新打包（valid_pairs.jsonl 和 delta_pairs.jsonl 均已存在）
   python scripts/run_synthesis.py --only-pack
 """
 
@@ -97,8 +101,24 @@ def main() -> None:
         help="跳过步骤2（raw_pairs.jsonl 已存在时）",
     )
     parser.add_argument(
+        "--skip-to-delta", action="store_true",
+        help="跳过步骤1-3，直接从步骤4（gen_delta）开始",
+    )
+    parser.add_argument(
         "--only-pack", action="store_true",
-        help="只执行步骤4（valid_pairs.jsonl 已存在时）",
+        help="只执行步骤5（valid_pairs.jsonl 和 delta_pairs.jsonl 均已存在时）",
+    )
+    parser.add_argument(
+        "--delta-target", type=int, default=200,
+        help="gen_delta 目标生成条数（默认 200）",
+    )
+    parser.add_argument(
+        "--delta-no-llm", action="store_true",
+        help="gen_delta 只用规则驱动，不调用 LLM（更快，适合测试）",
+    )
+    parser.add_argument(
+        "--skip-delta", action="store_true",
+        help="跳过步骤4（delta_pairs.jsonl 已存在或不需要修改轮数据时）",
     )
     parser.add_argument(
         "--val-ratio", type=float, default=0.10,
@@ -112,17 +132,20 @@ def main() -> None:
 
     # 打印摘要
     print("\n训练数据合成流水线")
-    print(f"  模型      : {args.model}")
-    print(f"  CSV 限制  : {'全量' if args.limit is None else f'前 {args.limit} 个'}")
-    print(f"  渲染校验  : {'关闭' if args.no_render else '开启'}")
-    print(f"  验证集比例: {args.val_ratio:.0%}")
+    print(f"  模型        : {args.model}")
+    print(f"  CSV 限制    : {'全量' if args.limit is None else f'前 {args.limit} 个'}")
+    print(f"  渲染校验    : {'关闭' if args.no_render else '开启'}")
+    print(f"  修改轮目标  : {args.delta_target} 条{'（仅规则驱动）' if args.delta_no_llm else ''}")
+    print(f"  验证集比例  : {args.val_ratio:.0%}")
 
     t_start = time.time()
     success_steps: list[str] = []
     failed_step: str | None = None
 
+    skip_early = args.only_pack or args.skip_to_delta
+
     # ── 步骤 1：生成 CSV ──────────────────────────────────────────────────
-    if args.only_pack or args.skip_csv or args.skip_pairs:
+    if skip_early or args.skip_csv or args.skip_pairs:
         print("\n[步骤1] 跳过 CSV 生成")
     else:
         ok = _run("生成训练 CSV（gen_csv.py）", "gen_csv.py", [])
@@ -134,7 +157,7 @@ def main() -> None:
             sys.exit(1)
 
     # ── 步骤 2：合成配对 ──────────────────────────────────────────────────
-    if args.only_pack or args.skip_pairs:
+    if skip_early or args.skip_pairs:
         print("\n[步骤2] 跳过配对合成")
     else:
         extra: list[str] = ["--model", args.model]
@@ -151,7 +174,7 @@ def main() -> None:
             sys.exit(1)
 
     # ── 步骤 3：校验过滤 ──────────────────────────────────────────────────
-    if args.only_pack:
+    if skip_early:
         print("\n[步骤3] 跳过校验")
     else:
         extra = ["--no-render"] if args.no_render else []
@@ -163,13 +186,30 @@ def main() -> None:
             _print_summary(success_steps, failed_step, t_start)
             sys.exit(1)
 
-    # ── 步骤 4：打包 JSONL ────────────────────────────────────────────────
+    # ── 步骤 4：生成修改轮数据 ────────────────────────────────────────────
+    if args.only_pack or args.skip_delta:
+        print("\n[步骤4] 跳过修改轮数据生成")
+    else:
+        extra = ["--target", str(args.delta_target), "--model", args.model]
+        if args.limit:
+            extra += ["--limit", str(args.limit)]
+        if args.delta_no_llm:
+            extra.append("--no-llm")
+        ok = _run("生成修改轮数据（gen_delta.py）", "gen_delta.py", extra)
+        if ok:
+            success_steps.append("步骤4 修改轮数据")
+        else:
+            failed_step = "步骤4 gen_delta"
+            _print_summary(success_steps, failed_step, t_start)
+            sys.exit(1)
+
+    # ── 步骤 5：打包 JSONL ────────────────────────────────────────────────
     extra = ["--val-ratio", str(args.val_ratio)]
     ok = _run("打包微调数据（pack_finetune.py）", "pack_finetune.py", extra)
     if ok:
-        success_steps.append("步骤4 打包JSONL")
+        success_steps.append("步骤5 打包JSONL")
     else:
-        failed_step = "步骤4 pack_finetune"
+        failed_step = "步骤5 pack_finetune"
 
     _print_summary(success_steps, failed_step, t_start)
     if failed_step:
@@ -191,6 +231,7 @@ def _print_summary(
     if not failed_step:
         print("\n输出文件：")
         for p in [
+            Path("data/pairs/delta_pairs.jsonl"),
             Path("data/finetune/train.jsonl"),
             Path("data/finetune/val.jsonl"),
         ]:

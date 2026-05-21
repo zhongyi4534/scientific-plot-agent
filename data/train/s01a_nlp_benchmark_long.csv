@@ -1,4 +1,4 @@
-approach,evaluation_set,准确率,se
+baseline,benchmark,score,error_bar
 BERT-base,SST-2,93.27,0.46
 BERT-base,CoLA,62.36,0.62
 BERT-base,RTE,82.59,0.79

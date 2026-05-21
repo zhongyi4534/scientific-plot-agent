@@ -1,0 +1,6 @@
+algorithm,Pneumonia,COVID-19,Diabetic Retinopathy,Skin Cancer,ECG-Afib,Breast Cancer
+ResNet-50,0.904,0.871,0.939,0.876,0.965,0.888
+DenseNet-121,0.922,0.889,0.952,0.88,0.974,0.9
+EfficientNet-B4,0.934,0.894,0.945,0.88,0.975,0.906
+ViT-B/16,0.931,0.904,0.955,0.893,0.984,0.908
+ConvNeXt-B,0.926,0.892,0.956,0.894,0.986,0.91

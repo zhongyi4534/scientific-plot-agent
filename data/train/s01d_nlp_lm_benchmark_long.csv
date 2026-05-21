@@ -1,4 +1,4 @@
-approach,dataset,score,parameters_M
+algorithm,dataset,result,model_size_M
 GPT2-small,HellaSwag,55.18,117
 GPT2-small,WinoGrande,59.98,117
 GPT2-small,ARC-Easy,64.75,117

@@ -20,10 +20,11 @@ import argparse
 import json
 from pathlib import Path
 
+import pandas as pd
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from system.merger import fill_defaults
+from system.merger import fill_defaults, strip_defaults
 from system.validator import validate
 from tools.loader import DataLoadError, _CACHE, load_data
 from tools.renderer import RenderError, render_plot
@@ -70,6 +71,46 @@ def _check_col_exists(spec: dict, df_cols: set[str]) -> str | None:
         val = spec.get(field)
         if val and val not in df_cols:
             return f"字段 '{field}' 引用列 '{val}' 不存在于数据中"
+
+    return None
+
+
+def _check_semantic_validity(spec: dict, df: pd.DataFrame) -> str | None:
+    """
+    语义合理性检查：检测字段组合是否有意义，独立于字段类型检查之外。
+    在列名存在性确认后调用，因此可以安全地读取列的 dtype。
+    返回 None 表示通过，返回错误描述字符串表示失败。
+    """
+    chart_type = spec.get("chart_type")
+    data_x = spec.get("data_x")
+    data_y = spec.get("data_y")
+
+    def _is_categorical(col: str) -> bool:
+        """判断列是否为类别型（非数值）。"""
+        return col in df.columns and not pd.api.types.is_numeric_dtype(df[col])
+
+    # ① scatter + 类别型 data_x + show_regression
+    if chart_type == "scatter" and spec.get("params_show_regression"):
+        if data_x and _is_categorical(data_x):
+            return (
+                f"scatter 图 params_show_regression=true 但 data_x='{data_x}' "
+                f"是类别型列，回归线无法计算"
+            )
+
+    # ② box + list data_y（应改用 data_group_by）
+    if chart_type == "box" and isinstance(data_y, list):
+        return (
+            f"box 图 data_y 不能是列表 {data_y}，"
+            f"多指标对比请用 data_group_by"
+        )
+
+    # ③ line + 类别型 data_x + smooth
+    if chart_type == "line" and spec.get("params_smooth"):
+        if data_x and _is_categorical(data_x):
+            return (
+                f"line 图 params_smooth=true 但 data_x='{data_x}' "
+                f"是类别型列，平滑插值无法计算"
+            )
 
     return None
 
@@ -122,7 +163,12 @@ def validate_one(
     if col_err:
         return False, col_err, None
 
-    # ── 4. 渲染校验 ──────────────────────────────────────────────────────
+    # ── 4. 语义合理性（字段组合约束）────────────────────────────────────
+    semantic_err = _check_semantic_validity(spec_with_source, df)
+    if semantic_err:
+        return False, f"语义检查失败：{semantic_err}", None
+
+    # ── 5. 渲染校验 ──────────────────────────────────────────────────────
     if do_render:
         try:
             img_path = render_plot(spec_with_source, cache_key)
@@ -138,9 +184,13 @@ def validate_one(
         except Exception:
             pass
 
+    # fill_defaults 仅用于校验和渲染，写出时用 strip_defaults 去除冗余默认值，
+    # 保证 data_y 单元素列表已拆包（fill_defaults 的规范化效果被保留），
+    # 同时 assistant 输出只含用户实际指定的字段，训练数据不会学到"总是输出所有字段"。
+    normalized_spec = strip_defaults(spec_with_source)
     enriched = {
         **record,
-        "plotspec": clean_spec,      # 不含 data_source 的干净版本
+        "plotspec": normalized_spec,
         "data_context": data_context,
     }
     return True, "ok", enriched
@@ -171,8 +221,8 @@ def run_validation(do_render: bool) -> None:
     for i, record in enumerate(records, 1):
         rid = record.get("id", f"record_{i}")
         ok, reason, enriched = validate_one(record, do_render=do_render)
-        status = "✓" if ok else "✗"
-        print(f"  [{i:3d}/{len(records)}] {status} {rid}  —  {reason}")
+        status = "OK" if ok else "NG"
+        print(f"  [{i:3d}/{len(records)}] {status} {rid}  {reason}")
         if ok:
             passed_list.append(enriched)
         else:

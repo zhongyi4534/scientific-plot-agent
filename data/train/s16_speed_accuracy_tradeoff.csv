@@ -1,4 +1,4 @@
-approach,num_params_M,top1_acc
+model,model_size_M,top1_acc
 MobileNetV2,3.4,71.9
 MobileNetV3-S,2.5,67.48
 MobileNetV3-L,5.5,75.15

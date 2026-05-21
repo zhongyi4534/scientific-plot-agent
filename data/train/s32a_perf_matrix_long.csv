@@ -1,4 +1,4 @@
-approach,dataset,score
+model,evaluation_set,performance
 BERT,SST-2,93.23
 BERT,CoLA,61.24
 BERT,RTE,82.17

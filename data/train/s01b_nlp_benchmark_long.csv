@@ -1,4 +1,4 @@
-model,dataset,f1_score
+approach,corpus,f1_score
 BERT,CoNLL-03,91.22
 BERT,OntoNotes,87.79
 BERT,WNUT,56.95

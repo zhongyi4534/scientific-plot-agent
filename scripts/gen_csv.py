@@ -1092,6 +1092,306 @@ def gen_s34() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 场景 35：强化学习训练曲线
+# ---------------------------------------------------------------------------
+
+def gen_s35() -> None:
+    """4 种 RL 算法 × 2 个环境，mean_reward 随训练步数（千步）变化；
+    + 同一环境多种子最终性能分布（box 场景）。"""
+
+    steps_k = [0, 10, 25, 50, 100, 200, 300, 500, 750, 1000]
+    algos = {
+        "PPO":  (2.8, 0.18),   # (收敛速度, 终态噪声σ)
+        "SAC":  (4.2, 0.12),
+        "TD3":  (3.6, 0.15),
+        "A2C":  (1.8, 0.25),
+    }
+    envs = {
+        "Hopper-v4":      {"start": -150, "final":  900, "scale": 25},
+        "HalfCheetah-v4": {"start": -300, "final": 7500, "scale": 180},
+    }
+
+    rows = []
+    for env_name, ep in envs.items():
+        for algo, (spd, sigma) in algos.items():
+            for sk in steps_k:
+                t = sk / 1000.0
+                base = ep["start"] + (ep["final"] - ep["start"]) * (1 - np.exp(-spd * t))
+                reward = float(base + RNG.normal(0, ep["scale"]))
+                rows.append({"algorithm": algo, "environment": env_name,
+                              "steps_k": sk, "mean_reward": round(reward, 1)})
+    _save(pd.DataFrame(rows), "s35a_rl_training_curve")
+
+    # 变体 B：多种子最终性能（box 图）
+    seeds = list(range(8))
+    final_perf = {"PPO": 850, "SAC": 950, "TD3": 920, "A2C": 650}
+    final_std  = {"PPO": 40,  "SAC": 28,  "TD3": 35,  "A2C": 60}
+    rows = []
+    for algo in algos:
+        for seed in seeds:
+            rng_s = np.random.default_rng(42 + seed * 7 + hash(algo) % 100)
+            rw = float(rng_s.normal(final_perf[algo], final_std[algo]))
+            rows.append({"algorithm": algo, "seed": seed, "final_reward": round(rw, 1)})
+    _save(pd.DataFrame(rows), "s35b_rl_seed_distribution")
+
+
+# ---------------------------------------------------------------------------
+# 场景 36：语音识别 WER
+# ---------------------------------------------------------------------------
+
+def gen_s36() -> None:
+    """5 个 ASR 系统 × 5 种噪声/环境条件，字错率（WER，越低越好）。"""
+
+    systems = ["Whisper-large-v3", "Wav2Vec2-large", "HuBERT-large",
+               "Conformer-CTC", "DeepSpeech2"]
+    conditions = ["clean", "noise_SNR10dB", "noise_SNR0dB", "music_bg", "reverb"]
+    base_wer = {
+        "Whisper-large-v3": [3.2,  8.5, 18.2, 12.4,  7.1],
+        "Wav2Vec2-large":   [4.8, 12.3, 25.6, 18.9,  9.8],
+        "HuBERT-large":     [4.1, 10.8, 22.1, 15.3,  8.5],
+        "Conformer-CTC":    [3.8,  9.5, 20.4, 14.1,  8.0],
+        "DeepSpeech2":      [8.4, 18.5, 38.2, 28.6, 15.3],
+    }
+    rows = []
+    for sys_name in systems:
+        for i, cond in enumerate(conditions):
+            wer = float(np.clip(base_wer[sys_name][i] + RNG.uniform(-0.6, 0.6), 0.5, 99))
+            rows.append({"system": sys_name, "condition": cond, "WER": round(wer, 2)})
+    _save(pd.DataFrame(rows), "s36_asr_wer")
+
+
+# ---------------------------------------------------------------------------
+# 场景 37：图神经网络（GNN）基准测试
+# ---------------------------------------------------------------------------
+
+def gen_s37() -> None:
+    """6 个 GNN 模型 × 4 个图数据集，节点分类准确率 + 训练时间。"""
+
+    gnn_models = ["GCN", "GAT", "GraphSAGE", "GIN", "MPNN", "GraphTransformer"]
+    graph_datasets = ["Cora", "Citeseer", "PubMed", "ogbn-arxiv"]
+    base_acc = {
+        "Cora":        [81.5, 83.0, 82.4, 82.7, 83.5, 85.1],
+        "Citeseer":    [70.3, 72.5, 71.4, 71.8, 72.0, 73.8],
+        "PubMed":      [79.0, 79.4, 79.8, 79.1, 80.2, 81.5],
+        "ogbn-arxiv":  [71.7, 73.9, 71.5, 72.3, 73.5, 75.8],
+    }
+    train_time_s = {"GCN": 12, "GAT": 35, "GraphSAGE": 28, "GIN": 42, "MPNN": 55, "GraphTransformer": 180}
+    rows = []
+    for j, m in enumerate(gnn_models):
+        for d in graph_datasets:
+            acc = float(np.clip(base_acc[d][j] + RNG.uniform(-0.5, 0.5), 55, 99))
+            t = round(train_time_s[m] * float(RNG.uniform(0.9, 1.1)), 1)
+            rows.append({"model": m, "dataset": d, "accuracy": round(acc, 2), "train_time_s": t})
+    _save(pd.DataFrame(rows), "s37_gnn_benchmark")
+
+
+# ---------------------------------------------------------------------------
+# 场景 38：长序列时间序列预测（LTSF）
+# ---------------------------------------------------------------------------
+
+def gen_s38() -> None:
+    """4 种预测方法 × 预测步长 [96/192/336/720] × 2 个数据集，MAE + MSE。"""
+
+    ts_methods = ["Transformer", "Informer", "PatchTST", "TimesNet"]
+    ts_datasets = ["ETTh1", "Weather"]
+    horizons = [96, 192, 336, 720]
+    base_mae = {
+        "Transformer": {"ETTh1": 0.400, "Weather": 0.300},
+        "Informer":    {"ETTh1": 0.430, "Weather": 0.340},
+        "PatchTST":    {"ETTh1": 0.370, "Weather": 0.260},
+        "TimesNet":    {"ETTh1": 0.390, "Weather": 0.280},
+    }
+    rows = []
+    for m in ts_methods:
+        for ds in ts_datasets:
+            for h in horizons:
+                scale = 1 + 0.30 * np.log2(h / 96)
+                mae = float(np.clip(base_mae[m][ds] * scale + RNG.uniform(-0.012, 0.012), 0.05, 2.5))
+                mse = float(np.clip(mae ** 2 * 2.5 + RNG.uniform(-0.01, 0.01), 0.01, 6.0))
+                rows.append({"method": m, "dataset": ds, "horizon": h,
+                             "MAE": round(mae, 3), "MSE": round(mse, 3)})
+    _save(pd.DataFrame(rows), "s38_tsf_benchmark")
+
+
+# ---------------------------------------------------------------------------
+# 场景 39：推荐系统 top-K 指标
+# ---------------------------------------------------------------------------
+
+def gen_s39() -> None:
+    """5 种推荐算法，K ∈ [1, 5, 10, 20, 50]，NDCG@K + Precision@K。"""
+
+    rec_algos = ["BPR", "NeuMF", "LightGCN", "SASRec", "BERT4Rec"]
+    k_vals = [1, 5, 10, 20, 50]
+    base_ndcg = {"BPR": 0.080, "NeuMF": 0.100, "LightGCN": 0.140, "SASRec": 0.160, "BERT4Rec": 0.170}
+    rows = []
+    for algo in rec_algos:
+        for k in k_vals:
+            ndcg = float(np.clip(base_ndcg[algo] * (1 + 0.48 * np.log2(k)) + RNG.uniform(-0.003, 0.003), 0.01, 0.95))
+            prec = float(np.clip(base_ndcg[algo] * 0.75 / max(np.sqrt(k / 10), 0.5) + RNG.uniform(-0.002, 0.002), 0.001, 0.5))
+            rows.append({"algorithm": algo, "top_k": k, "NDCG": round(ndcg, 4), "Precision": round(prec, 4)})
+    _save(pd.DataFrame(rows), "s39_recsys_topk")
+
+
+# ---------------------------------------------------------------------------
+# 场景 40：RNA-seq 差异表达（火山图散点）
+# ---------------------------------------------------------------------------
+
+def gen_s40() -> None:
+    """基因差异表达：log2FoldChange (x) vs -log10(padj) (y)，按调控方向分组。
+    均为数值型列，适合 scatter（含 data_group_by=regulation）。"""
+
+    n_genes = 90
+    log2fc = RNG.normal(0, 0.8, n_genes)
+    pval = RNG.uniform(0.05, 1.0, n_genes)
+
+    # 嵌入显著差异基因
+    n_up, n_dn = 15, 12
+    log2fc[:n_up] = RNG.normal(3.5, 0.7, n_up)
+    log2fc[n_up:n_up + n_dn] = RNG.normal(-3.0, 0.6, n_dn)
+    pval[:n_up + n_dn] = RNG.uniform(1e-15, 5e-4, n_up + n_dn)
+
+    neg_log10_p = np.clip(-np.log10(pval), 0, 18)
+
+    rows = []
+    for i in range(n_genes):
+        fc, nlp = float(log2fc[i]), float(neg_log10_p[i])
+        if abs(fc) >= 1.5 and nlp >= 3.0:
+            regulation = "Up-regulated" if fc > 0 else "Down-regulated"
+        else:
+            regulation = "Not significant"
+        rows.append({
+            "gene_id": f"Gene_{i + 1:03d}",
+            "log2FoldChange": round(fc, 3),
+            "neg_log10_padj": round(nlp, 3),
+            "regulation": regulation,
+        })
+    _save(pd.DataFrame(rows), "s40_rnaseq_volcano")
+
+
+# ---------------------------------------------------------------------------
+# 场景 41：全球温度异常时序
+# ---------------------------------------------------------------------------
+
+def gen_s41() -> None:
+    """5 个地区，1990-2023 年年均温度距平（℃），呈线性上升趋势。
+    year 为数值型 x 轴，适合 line + smooth + 回归趋势分析。"""
+
+    years = list(range(1990, 2024))
+    regions = {
+        "Global":        (0.025, -0.20, 0.12),   # (趋势/年, 基准, 噪声σ)
+        "Arctic":        (0.065, -0.50, 0.28),
+        "Tropics":       (0.018, -0.10, 0.08),
+        "North America": (0.028, -0.30, 0.18),
+        "Europe":        (0.035, -0.20, 0.15),
+    }
+    rows = []
+    for region, (trend, base, noise) in regions.items():
+        for i, yr in enumerate(years):
+            anomaly = base + trend * i + float(RNG.normal(0, noise))
+            rows.append({"region": region, "year": yr, "temp_anomaly_C": round(anomaly, 3)})
+    _save(pd.DataFrame(rows), "s41_climate_temp_anomaly")
+
+
+# ---------------------------------------------------------------------------
+# 场景 42：药物剂量-响应曲线
+# ---------------------------------------------------------------------------
+
+def gen_s42() -> None:
+    """4 种化合物，10 个剂量梯度（nM，对数间距），细胞活力（%），Hill 方程 S 型曲线。
+    log10_dose 为数值型 x 轴，适合 line/scatter。"""
+
+    doses_nM = np.logspace(0, 5, 10)        # 1 → 100,000 nM
+    compounds = {
+        "Compound-A": {"IC50": 150,  "hill": 1.2, "max_inh": 95},
+        "Compound-B": {"IC50": 800,  "hill": 0.8, "max_inh": 88},
+        "Compound-C": {"IC50":  45,  "hill": 1.5, "max_inh": 99},
+        "Compound-D": {"IC50": 3200, "hill": 1.0, "max_inh": 75},
+    }
+    rows = []
+    for cmpd, p in compounds.items():
+        for dose in doses_nM:
+            h = p["hill"]
+            inhibition = p["max_inh"] * dose ** h / (p["IC50"] ** h + dose ** h)
+            viability = float(np.clip(100 - inhibition + RNG.normal(0, 2.0), 0, 105))
+            rows.append({
+                "compound": cmpd,
+                "dose_nM": round(float(dose), 3),
+                "log10_dose": round(float(np.log10(dose)), 3),
+                "cell_viability_pct": round(viability, 2),
+            })
+    _save(pd.DataFrame(rows), "s42_dose_response")
+
+
+# ---------------------------------------------------------------------------
+# 场景 43：临床 AI 诊断 AUC
+# ---------------------------------------------------------------------------
+
+def gen_s43() -> None:
+    """5 个医学影像/临床模型 × 6 个疾病诊断任务，AUC（长表 + 宽表）。"""
+
+    med_models = ["ResNet-50", "DenseNet-121", "EfficientNet-B4", "ViT-B/16", "ConvNeXt-B"]
+    diseases = ["Pneumonia", "COVID-19", "Diabetic Retinopathy",
+                "Skin Cancer", "ECG-Afib", "Breast Cancer"]
+    base_auc = {"Pneumonia": 0.910, "COVID-19": 0.880, "Diabetic Retinopathy": 0.940,
+                "Skin Cancer": 0.870, "ECG-Afib": 0.960, "Breast Cancer": 0.890}
+    m_delta  = {"ResNet-50": 0.000, "DenseNet-121": 0.010, "EfficientNet-B4": 0.015,
+                "ViT-B/16": 0.020, "ConvNeXt-B": 0.018}
+    rows = []
+    for m in med_models:
+        for d in diseases:
+            auc = float(np.clip(base_auc[d] + m_delta[m] + RNG.uniform(-0.012, 0.012), 0.50, 1.00))
+            rows.append({"model": m, "disease": d, "AUC": round(auc, 3)})
+    _save(pd.DataFrame(rows), "s43a_clinical_ai_auc_long")
+
+    # 宽表版本（行=模型，列=疾病）
+    rows_wide = []
+    for m in med_models:
+        row: dict = {"model": m}
+        for d in diseases:
+            auc = float(np.clip(base_auc[d] + m_delta[m] + RNG.uniform(-0.010, 0.010), 0.50, 1.00))
+            row[d] = round(auc, 3)
+        rows_wide.append(row)
+    _save(pd.DataFrame(rows_wide), "s43b_clinical_ai_auc_wide")
+
+
+# ---------------------------------------------------------------------------
+# 场景 44：代码生成能力（HumanEval / pass@k）
+# ---------------------------------------------------------------------------
+
+def gen_s44() -> None:
+    """6 个 LLM × 6 种编程语言，pass@1（分语言）；
+    + pass@k 曲线（k 为数值型 x 轴，适合 line）。"""
+
+    code_llms = ["GPT-4o", "Claude-3.5-Sonnet", "Gemini-1.5-Pro",
+                 "CodeLlama-34B", "DeepSeek-Coder-33B", "StarCoder2-15B"]
+    prog_langs = ["Python", "Java", "C++", "JavaScript", "Rust", "Go"]
+    base_p1 = {
+        "GPT-4o":               [67.0, 58.0, 55.0, 64.0, 42.0, 52.0],
+        "Claude-3.5-Sonnet":    [64.0, 55.0, 52.0, 61.0, 40.0, 50.0],
+        "Gemini-1.5-Pro":       [60.0, 52.0, 49.0, 57.0, 37.0, 47.0],
+        "CodeLlama-34B":        [53.0, 44.0, 42.0, 50.0, 28.0, 38.0],
+        "DeepSeek-Coder-33B":   [58.0, 50.0, 48.0, 55.0, 35.0, 45.0],
+        "StarCoder2-15B":       [46.0, 38.0, 36.0, 43.0, 22.0, 32.0],
+    }
+    rows = []
+    for llm in code_llms:
+        for j, lang in enumerate(prog_langs):
+            p1 = float(np.clip(base_p1[llm][j] + RNG.uniform(-1.5, 1.5), 5, 98))
+            rows.append({"model": llm, "language": lang, "pass_at_1": round(p1, 1)})
+    _save(pd.DataFrame(rows), "s44a_code_gen_by_language")
+
+    # 变体 B：pass@k 曲线（k=1/5/10/50/100）
+    k_list = [1, 5, 10, 50, 100]
+    rows = []
+    for llm in code_llms:
+        avg_p1 = sum(base_p1[llm]) / len(prog_langs) / 100.0  # normalize to [0,1]
+        for k in k_list:
+            pass_k = float(np.clip((1 - (1 - avg_p1) ** k) * 100 + RNG.uniform(-1.0, 1.0), 0, 99.9))
+            rows.append({"model": llm, "k": k, "pass_at_k": round(pass_k, 1)})
+    _save(pd.DataFrame(rows), "s44b_code_pass_at_k")
+
+
+# ---------------------------------------------------------------------------
 # 列名多样化：对生成的 CSV 随机替换语义等价的列名
 # ---------------------------------------------------------------------------
 
@@ -1136,6 +1436,13 @@ COL_ALIASES: dict[str, list[str]] = {
     "strategy":     ["method", "approach", "technique"],
     # 计算成本
     "params_M":     ["num_params_M", "parameters_M", "model_size_M"],
+    # s35-s44 新增
+    "algorithm":    ["model", "method", "approach", "system"],
+    "compound":     ["drug", "treatment", "molecule"],
+    "disease":      ["condition", "task", "diagnosis"],
+    "regulation":   ["group", "class", "category"],
+    "environment":  ["env", "task"],
+    "condition":    ["noise_type", "setting", "scenario"],
 }
 
 # 不参与随机替换的列名（有严格语义或是数值轴）
@@ -1151,6 +1458,17 @@ _KEEP_FIXED: frozenset[str] = frozenset({
     "strongly_disagree", "disagree", "neutral", "agree", "strongly_agree",
     "proportion_pct", "performance", "reaction_rate", "absorbance",
     "response_rate",
+    # s35-s44 新增
+    "steps_k", "final_reward", "mean_reward",   # RL
+    "WER",                                       # 语音
+    "train_time_s",                              # GNN
+    "horizon", "MAE", "MSE",                     # 时序预测
+    "top_k", "NDCG", "Precision",                # 推荐
+    "log2FoldChange", "neg_log10_padj",          # RNA-seq
+    "temp_anomaly_C",                            # 气候
+    "dose_nM", "log10_dose", "cell_viability_pct",  # 药理
+    "AUC",                                       # 医学影像
+    "pass_at_1", "pass_at_k", "k",               # 代码生成
 })
 
 
@@ -1218,6 +1536,16 @@ GENERATORS = [
     ("场景32", gen_s32),
     ("场景33", gen_s33),
     ("场景34", gen_s34),
+    ("场景35", gen_s35),
+    ("场景36", gen_s36),
+    ("场景37", gen_s37),
+    ("场景38", gen_s38),
+    ("场景39", gen_s39),
+    ("场景40", gen_s40),
+    ("场景41", gen_s41),
+    ("场景42", gen_s42),
+    ("场景43", gen_s43),
+    ("场景44", gen_s44),
 ]
 
 

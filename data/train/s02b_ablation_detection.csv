@@ -1,4 +1,4 @@
-variant,mAP
+configuration,mAP
 Full,48.16
 -FPN,46.22
 -data aug,44.64

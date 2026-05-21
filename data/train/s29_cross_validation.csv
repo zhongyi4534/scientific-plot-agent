@@ -1,4 +1,4 @@
-algorithm,fold,acc
+method,fold,accuracy
 SVM,fold1,83.69
 SVM,fold2,81.34
 SVM,fold3,82.23

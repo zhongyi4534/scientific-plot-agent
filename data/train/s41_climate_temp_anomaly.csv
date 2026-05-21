@@ -1,0 +1,171 @@
+region,year,temp_anomaly_C
+Global,1990,-0.188
+Global,1991,-0.304
+Global,1992,-0.099
+Global,1993,-0.123
+Global,1994,0.068
+Global,1995,-0.074
+Global,1996,-0.142
+Global,1997,-0.055
+Global,1998,-0.161
+Global,1999,0.074
+Global,2000,0.121
+Global,2001,0.371
+Global,2002,0.025
+Global,2003,0.093
+Global,2004,0.081
+Global,2005,0.2
+Global,2006,0.246
+Global,2007,0.219
+Global,2008,0.38
+Global,2009,0.201
+Global,2010,0.418
+Global,2011,0.39
+Global,2012,0.349
+Global,2013,0.337
+Global,2014,0.691
+Global,2015,0.327
+Global,2016,0.486
+Global,2017,0.385
+Global,2018,0.714
+Global,2019,0.631
+Global,2020,0.469
+Global,2021,0.637
+Global,2022,0.631
+Global,2023,0.563
+Arctic,1990,-0.288
+Arctic,1991,-0.326
+Arctic,1992,-0.31
+Arctic,1993,-0.317
+Arctic,1994,-0.119
+Arctic,1995,-0.111
+Arctic,1996,-0.093
+Arctic,1997,-0.224
+Arctic,1998,0.494
+Arctic,1999,-0.209
+Arctic,2000,0.27
+Arctic,2001,0.125
+Arctic,2002,0.773
+Arctic,2003,0.092
+Arctic,2004,0.204
+Arctic,2005,0.203
+Arctic,2006,0.631
+Arctic,2007,0.221
+Arctic,2008,0.536
+Arctic,2009,0.132
+Arctic,2010,0.867
+Arctic,2011,0.725
+Arctic,2012,0.513
+Arctic,2013,1.299
+Arctic,2014,0.694
+Arctic,2015,1.348
+Arctic,2016,0.994
+Arctic,2017,1.703
+Arctic,2018,1.53
+Arctic,2019,1.103
+Arctic,2020,1.193
+Arctic,2021,1.685
+Arctic,2022,1.507
+Arctic,2023,1.598
+Tropics,1990,0.002
+Tropics,1991,-0.142
+Tropics,1992,-0.057
+Tropics,1993,0.03
+Tropics,1994,0.037
+Tropics,1995,-0.023
+Tropics,1996,-0.015
+Tropics,1997,-0.113
+Tropics,1998,-0.04
+Tropics,1999,0.087
+Tropics,2000,0.069
+Tropics,2001,0.104
+Tropics,2002,0.199
+Tropics,2003,0.039
+Tropics,2004,0.133
+Tropics,2005,0.185
+Tropics,2006,0.132
+Tropics,2007,0.321
+Tropics,2008,0.297
+Tropics,2009,0.265
+Tropics,2010,0.404
+Tropics,2011,0.158
+Tropics,2012,0.295
+Tropics,2013,0.343
+Tropics,2014,0.259
+Tropics,2015,0.374
+Tropics,2016,0.279
+Tropics,2017,0.441
+Tropics,2018,0.489
+Tropics,2019,0.444
+Tropics,2020,0.292
+Tropics,2021,0.381
+Tropics,2022,0.521
+Tropics,2023,0.496
+North America,1990,-0.785
+North America,1991,-0.048
+North America,1992,-0.219
+North America,1993,-0.363
+North America,1994,-0.009
+North America,1995,-0.282
+North America,1996,-0.256
+North America,1997,-0.039
+North America,1998,0.245
+North America,1999,0.244
+North America,2000,0.045
+North America,2001,0.091
+North America,2002,0.178
+North America,2003,-0.162
+North America,2004,0.208
+North America,2005,-0.012
+North America,2006,0.205
+North America,2007,0.135
+North America,2008,0.294
+North America,2009,0.253
+North America,2010,-0.293
+North America,2011,0.32
+North America,2012,0.432
+North America,2013,0.424
+North America,2014,0.354
+North America,2015,0.696
+North America,2016,0.484
+North America,2017,0.535
+North America,2018,0.672
+North America,2019,0.577
+North America,2020,0.378
+North America,2021,0.129
+North America,2022,0.51
+North America,2023,0.761
+Europe,1990,-0.253
+Europe,1991,-0.045
+Europe,1992,-0.108
+Europe,1993,0.098
+Europe,1994,-0.104
+Europe,1995,0.045
+Europe,1996,0.086
+Europe,1997,0.27
+Europe,1998,-0.176
+Europe,1999,0.046
+Europe,2000,0.277
+Europe,2001,0.417
+Europe,2002,0.256
+Europe,2003,0.211
+Europe,2004,0.404
+Europe,2005,0.455
+Europe,2006,0.306
+Europe,2007,0.445
+Europe,2008,0.607
+Europe,2009,0.749
+Europe,2010,0.611
+Europe,2011,0.542
+Europe,2012,0.562
+Europe,2013,0.689
+Europe,2014,0.623
+Europe,2015,0.703
+Europe,2016,0.551
+Europe,2017,0.94
+Europe,2018,0.609
+Europe,2019,0.75
+Europe,2020,0.865
+Europe,2021,1.184
+Europe,2022,0.857
+Europe,2023,0.855

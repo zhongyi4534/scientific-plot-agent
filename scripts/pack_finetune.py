@@ -10,21 +10,24 @@ scripts/pack_finetune.py
 每条记录格式（Qwen3 ChatML / messages 格式）：
     {
       "messages": [
-        {"role": "system",    "content": "<SYSTEM_FIRST_FINETUNE>"},
-        {"role": "user",      "content": "数据摘要：\\n...\\n\\n用户需求：...\\n输出：/no_think"},
-        {"role": "assistant", "content": "{plotspec json}"}
+        {"role": "system",    "content": "<根据 record_type 选择的系统提示词>"},
+        {"role": "user",      "content": "<DataContext>\\n\\n用户需求：...\\n输出：/no_think"},
+        {"role": "assistant", "content": "{plotspec 或 delta json}"}
       ]
     }
+
+系统提示词按记录类型（record_type）动态选择：
+    "first" → SYSTEM_FIRST_FINETUNE（输出完整 PlotSpec）
+    "delta" → SYSTEM_DELTA_FINETUNE（输出仅含变更字段的 delta dict）
+
+valid_pairs.jsonl 中的记录字段：
+    首轮记录：record_type="first", user_input, data_context, plotspec, csv_path
+    修改轮记录：record_type="delta", user_input, data_context, current_spec, plotspec(delta), csv_path
 
 用法：
     python scripts/pack_finetune.py
     python scripts/pack_finetune.py --val-ratio 0.15   # 调整验证集比例
     python scripts/pack_finetune.py --seed 123          # 调整随机分割种子
-
-扩展说明（多轮数据）：
-    多轮微调数据（修改轮）格式：在 messages 中追加多个 user/assistant 对。
-    当前版本只生成首轮数据（messages 长度固定为 3）。
-    如需添加多轮，在 build_messages() 中扩展 turn_list 即可，接口已预留。
 """
 
 from __future__ import annotations
@@ -37,17 +40,28 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from model.prompts import SYSTEM_FIRST_FINETUNE, format_user_message
+from model.prompts import (
+    SYSTEM_DELTA_FINETUNE,
+    SYSTEM_FIRST_FINETUNE,
+    format_user_message,
+    format_user_message_delta,
+)
+
+_SYSTEM_MAP: dict[str, str] = {
+    "first": SYSTEM_FIRST_FINETUNE,
+    "delta": SYSTEM_DELTA_FINETUNE,
+}
 
 # ---------------------------------------------------------------------------
 # 配置
 # ---------------------------------------------------------------------------
 
-PAIRS_DIR   = Path("data/pairs")
+PAIRS_DIR    = Path("data/pairs")
 FINETUNE_DIR = Path("data/finetune")
 FINETUNE_DIR.mkdir(parents=True, exist_ok=True)
 
 VALID_PAIRS_PATH = PAIRS_DIR / "valid_pairs.jsonl"
+DELTA_PAIRS_PATH = PAIRS_DIR / "delta_pairs.jsonl"
 TRAIN_PATH = FINETUNE_DIR / "train.jsonl"
 VAL_PATH   = FINETUNE_DIR / "val.jsonl"
 
@@ -63,47 +77,42 @@ def build_messages(
     user_input: str,
     data_context: str,
     plotspec: dict,
-    turn_list: list[dict] | None = None,
+    record_type: str = "first",
+    current_spec: dict | None = None,
 ) -> dict:
     """
-    构建一条微调样本的 messages 结构。
+    构建一条微调样本的 messages 结构（含 system message）。
+
+    系统提示词根据 record_type 从 _SYSTEM_MAP 中选取，内嵌到每条记录，
+    使不同类型的记录（首轮/修改轮）各自携带正确的提示词，无需训练时统一注入。
 
     Args:
-        user_input:   首轮用户请求。
+        user_input:   用户请求（首轮或修改请求）。
         data_context: 数据摘要字符串（由 tools.loader._build_context 生成）。
-        plotspec:     目标 PlotSpec dict（不含 data_source）。
-        turn_list:    后续修改轮列表，每个元素为
-                      {"user_input": str, "delta": dict}。
-                      当前版本传 None，预留多轮扩展接口。
+        plotspec:     首轮为完整 PlotSpec dict，修改轮为 delta dict（均不含 data_source）。
+        record_type:  "first"=首轮（默认），"delta"=修改轮。
+        current_spec: 修改轮专用，当前生效的完整 PlotSpec dict（不含 data_source）。
+                      record_type="first" 时忽略此参数。
 
     Returns:
         {"messages": [...]} 格式的 dict，直接可序列化为 JSONL。
     """
-    messages = [
-        {"role": "system", "content": SYSTEM_FIRST_FINETUNE},
-        {
-            "role": "user",
-            "content": format_user_message(user_input, data_context),
-        },
-        {
-            "role": "assistant",
-            "content": json.dumps(plotspec, ensure_ascii=False, separators=(",", ":")),
-        },
-    ]
+    system_prompt = _SYSTEM_MAP.get(record_type, SYSTEM_FIRST_FINETUNE)
 
-    # 多轮扩展预留：追加后续 user/assistant 对
-    if turn_list:
-        for turn in turn_list:
-            messages.append({
-                "role": "user",
-                "content": turn["user_input"] + " /no_think",
-            })
-            messages.append({
-                "role": "assistant",
-                "content": json.dumps(turn["delta"], ensure_ascii=False, separators=(",", ":")),
-            })
+    if record_type == "delta" and current_spec is not None:
+        user_content = format_user_message_delta(user_input, data_context, current_spec)
+    else:
+        user_content = format_user_message(user_input, data_context)
 
-    return {"messages": messages}
+    return {
+        "messages": [
+            {"role": "system",    "content": system_prompt},
+            {"role": "user",      "content": user_content},
+            {"role": "assistant", "content": json.dumps(
+                plotspec, ensure_ascii=False, separators=(",", ":"),
+            )},
+        ]
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +135,19 @@ def pack(val_ratio: float, seed: int) -> None:
         print("✗ valid_pairs.jsonl 为空，没有可打包的数据")
         return
 
-    print(f"读取 {len(records)} 条有效配对")
+    n_first = len(records)
+
+    # 合并修改轮数据（若存在）
+    if DELTA_PAIRS_PATH.exists():
+        with DELTA_PAIRS_PATH.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        n_delta = len(records) - n_first
+        print(f"读取 {n_first} 条首轮配对 + {n_delta} 条修改轮配对，共 {len(records)} 条")
+    else:
+        print(f"读取 {n_first} 条有效配对（未找到 delta_pairs.jsonl，仅首轮数据）")
 
     # 随机分割
     rng = random.Random(seed)
@@ -139,11 +160,13 @@ def pack(val_ratio: float, seed: int) -> None:
     def _write(path: Path, recs: list[dict], split_name: str) -> None:
         with path.open("w", encoding="utf-8") as f:
             for rec in recs:
+                record_type = rec.get("record_type", "first")
                 sample = build_messages(
                     user_input=rec["user_input"],
                     data_context=rec["data_context"],
                     plotspec=rec["plotspec"],
-                    turn_list=None,   # 首轮只有，多轮扩展时传入
+                    record_type=record_type,
+                    current_spec=rec.get("current_spec"),
                 )
                 f.write(json.dumps(sample, ensure_ascii=False) + "\n")
         print(f"  {split_name}: {len(recs)} 条  →  {path}")
@@ -161,6 +184,8 @@ def pack(val_ratio: float, seed: int) -> None:
         user_input=sample_rec["user_input"],
         data_context=sample_rec["data_context"],
         plotspec=sample_rec["plotspec"],
+        record_type=sample_rec.get("record_type", "first"),
+        current_spec=sample_rec.get("current_spec"),
     )
     for msg in sample["messages"]:
         role = msg["role"]

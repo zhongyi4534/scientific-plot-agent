@@ -244,7 +244,7 @@ def generate_spec(
         system_msg = _SYSTEM_FIRST
         user_msg = (
             f"{_FEW_SHOT}\n\n"
-            f"数据摘要：\n{data_context}\n\n"
+            f"{data_context}\n\n"
             f"用户需求：{user_input}\n"
             "输出："
         )
@@ -252,7 +252,7 @@ def generate_spec(
         system_msg = _SYSTEM_DELTA
         user_msg = (
             f"{_FEW_SHOT}\n\n"
-            f"数据摘要：\n{data_context}\n\n"
+            f"{data_context}\n\n"
             f"当前配置：{json.dumps(current_spec, ensure_ascii=False)}\n\n"
             f"修改需求：{user_input}\n"
             "输出："

@@ -1,4 +1,4 @@
-epoch,train_loss,val_loss,val_acc
+epoch,training_loss,eval_loss,val_acc
 1,2.5917,2.6063,42.47
 2,2.4748,2.4748,45.14
 3,2.427,2.427,48.62

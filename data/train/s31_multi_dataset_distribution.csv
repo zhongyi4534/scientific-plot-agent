@@ -1,4 +1,4 @@
-method,dataset,accuracy
+approach,dataset,准确率
 BERT-base,dataset_01,82.64
 BERT-base,dataset_02,76.93
 BERT-base,dataset_03,86.49

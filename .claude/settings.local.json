@@ -10,7 +10,10 @@
       "Bash(python -m pytest tests/ -v -k \"not \\(first_round or delta_round or pipeline\\)\")",
       "Bash(python.exe -m pytest tests/ -v -k \"not \\(first_round or delta_round or pipeline\\)\")",
       "WebFetch(domain:qwen.readthedocs.io)",
-      "WebFetch(domain:swift.readthedocs.io)"
+      "WebFetch(domain:swift.readthedocs.io)",
+      "Bash(python -c \"import json; lines=open\\('data/finetune/train.jsonl',encoding='utf-8'\\).readlines\\(\\); print\\(f'train.jsonl: {len\\(lines\\)} 条'\\); lines2=open\\('data/finetune/val.jsonl',encoding='utf-8'\\).readlines\\(\\); print\\(f'val.jsonl: {len\\(lines2\\)} 条'\\); lines3=open\\('data/pairs/valid_pairs.jsonl',encoding='utf-8'\\).readlines\\(\\); print\\(f'valid_pairs.jsonl: {len\\(lines3\\)} 条'\\); lines4=open\\('data/pairs/raw_pairs.jsonl',encoding='utf-8'\\).readlines\\(\\); print\\(f'raw_pairs.jsonl: {len\\(lines4\\)} 条'\\)\")",
+      "Bash(python -c \"import json; lines=open\\('data/pairs/delta_pairs.jsonl',encoding='utf-8'\\).readlines\\(\\); print\\(f'delta_pairs.jsonl: {len\\(lines\\)} 条'\\); sample=json.loads\\(lines[0]\\); print\\('字段:', list\\(sample.keys\\(\\)\\)\\)\")",
+      "Bash(python -c ' *)"
     ]
   }
 }

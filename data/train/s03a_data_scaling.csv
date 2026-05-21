@@ -1,4 +1,4 @@
-model,train_size,acc
+model,train_size,accuracy
 Supervised,100,41.36
 Supervised,500,51.95
 Supervised,1000,58.05

@@ -1,4 +1,4 @@
-baseline,language,acc
+method,language,acc
 mBERT,English,90.11
 XLM-R,English,95.18
 mBERT,German,83.36
