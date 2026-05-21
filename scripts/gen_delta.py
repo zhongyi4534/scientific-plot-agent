@@ -58,8 +58,9 @@ from scripts.validate_pairs import _check_col_exists, _check_semantic_validity
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 PAIRS_DIR = Path("data/pairs")
-VALID_PAIRS_PATH = PAIRS_DIR / "valid_pairs.jsonl"
-DELTA_PAIRS_PATH = PAIRS_DIR / "delta_pairs.jsonl"
+VALID_PAIRS_PATH      = PAIRS_DIR / "valid_pairs.jsonl"
+DELTA_PAIRS_PATH      = PAIRS_DIR / "delta_pairs.jsonl"
+DELTA_REJECT_LOG_PATH = PAIRS_DIR / "delta_reject_log.jsonl"
 
 N_LLM_PER_SPEC = 4   # LLM 模式每条种子 spec 最多生成的候选对数
 N_RULE_PER_SPEC = 1  # 规则模式每条种子 spec 最多采用的候选对数
@@ -626,7 +627,10 @@ def generate_delta_pairs(
     seed_idx = 0
     n_cycles = 0
 
-    with DELTA_PAIRS_PATH.open(mode, encoding="utf-8") as fout:
+    with (
+        DELTA_PAIRS_PATH.open(mode, encoding="utf-8") as fout,
+        DELTA_REJECT_LOG_PATH.open(mode, encoding="utf-8") as frej,
+    ):
         while written_count < target:
             # 循环种子
             if seed_idx >= len(seed_records):
@@ -679,6 +683,13 @@ def generate_delta_pairs(
                         round_candidates.append((delta, user_input))
                         accepted += 1
                     else:
+                        frej.write(json.dumps({
+                            "record_type": "delta_reject",
+                            "source_id": source_id,
+                            "user_input": user_input,
+                            "delta": delta,
+                            "reject_reason": err,
+                        }, ensure_ascii=False) + "\n")
                         total_rejected += 1
 
             # ── LLM 生成 ──────────────────────────────────────────────
@@ -691,17 +702,38 @@ def generate_delta_pairs(
                 else:
                     for pair in pairs:
                         if not isinstance(pair, dict):
+                            frej.write(json.dumps({
+                                "record_type": "delta_reject",
+                                "source_id": source_id,
+                                "user_input": "",
+                                "delta": {},
+                                "reject_reason": f"LLM返回格式非dict：{str(pair)[:120]}",
+                            }, ensure_ascii=False) + "\n")
                             total_rejected += 1
                             continue
                         delta = pair.get("delta", {})
                         user_input = pair.get("user_input", "")
                         if not user_input or not isinstance(delta, dict):
+                            frej.write(json.dumps({
+                                "record_type": "delta_reject",
+                                "source_id": source_id,
+                                "user_input": user_input,
+                                "delta": delta if isinstance(delta, dict) else {},
+                                "reject_reason": "缺少 user_input 或 delta 字段",
+                            }, ensure_ascii=False) + "\n")
                             total_rejected += 1
                             continue
                         err = _validate_delta(delta, current_spec, cache_key, df)
                         if err is None:
                             round_candidates.append((delta, user_input))
                         else:
+                            frej.write(json.dumps({
+                                "record_type": "delta_reject",
+                                "source_id": source_id,
+                                "user_input": user_input,
+                                "delta": delta,
+                                "reject_reason": err,
+                            }, ensure_ascii=False) + "\n")
                             total_rejected += 1
 
             # ── 写出本轮有效样本 ────────────────────────────────────
@@ -728,6 +760,8 @@ def generate_delta_pairs(
 
     print(f"\n完成：写入 {written_count} 条修改轮样本，{total_rejected} 条被拒绝")
     print(f"输出：{DELTA_PAIRS_PATH}")
+    if total_rejected > 0:
+        print(f"拒绝日志：{DELTA_REJECT_LOG_PATH}（{total_rejected} 条）")
 
 
 # ---------------------------------------------------------------------------

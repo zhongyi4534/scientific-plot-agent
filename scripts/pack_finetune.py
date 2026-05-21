@@ -1,7 +1,11 @@
 """
 scripts/pack_finetune.py
 
-将 data/pairs/valid_pairs.jsonl 打包为 Qwen3 微调格式的 JSONL 文件。
+读取首轮配对和修改轮配对，打包为 Qwen3 微调格式的 JSONL 文件。
+
+输入：
+    data/pairs/valid_pairs.jsonl   首轮配对（record_type="first"）
+    data/pairs/delta_pairs.jsonl   修改轮配对（record_type="delta"，若存在则合并）
 
 输出：
     data/finetune/train.jsonl   训练集（90%）
@@ -20,9 +24,8 @@ scripts/pack_finetune.py
     "first" → SYSTEM_FIRST_FINETUNE（输出完整 PlotSpec）
     "delta" → SYSTEM_DELTA_FINETUNE（输出仅含变更字段的 delta dict）
 
-valid_pairs.jsonl 中的记录字段：
-    首轮记录：record_type="first", user_input, data_context, plotspec, csv_path
-    修改轮记录：record_type="delta", user_input, data_context, current_spec, plotspec(delta), csv_path
+valid_pairs.jsonl 字段（首轮）：record_type, user_input, data_context, plotspec, csv_path
+delta_pairs.jsonl 字段（修改轮）：record_type, user_input, data_context, current_spec, plotspec(delta), csv_path
 
 用法：
     python scripts/pack_finetune.py

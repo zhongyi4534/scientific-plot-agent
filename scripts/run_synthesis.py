@@ -1,13 +1,14 @@
 """
 scripts/run_synthesis.py
 
-训练数据合成流水线的一键运行脚本。按顺序执行以下五步：
+训练数据合成流水线的一键运行脚本。按顺序执行以下步骤：
 
-  步骤 1  gen_csv.py        —— 生成场景 CSV（含列名随机化）
-  步骤 2  gen_pairs.py      —— 调用 DeepSeek API 合成首轮 (user_input, plotspec) 配对
-  步骤 3  validate_pairs.py  —— 四级校验（字段 + 列名 + 语义 + 渲染）→ valid_pairs.jsonl
-  步骤 4  gen_delta.py       —— 生成修改轮 (user_input, delta) 配对 → delta_pairs.jsonl
-  步骤 5  pack_finetune.py   —— 合并首轮 + 修改轮，打包为 Qwen3 ChatML 微调 JSONL
+  步骤 1    gen_csv.py          —— 生成场景 CSV（含列名随机化）
+  步骤 2    gen_pairs.py        —— 调用 DeepSeek API 合成首轮 (user_input, plotspec) 配对
+  步骤 3    validate_pairs.py   —— 四级校验（字段 + 列名 + 语义 + 渲染）→ valid_pairs.jsonl
+  步骤 3.5  gen_pairs.py --supplement  —— 补充低频主题 / 缺失字段样本（可选，需指定 --with-supplement）
+  步骤 4    gen_delta.py        —— 生成修改轮 (user_input, delta) 配对 → delta_pairs.jsonl
+  步骤 5    pack_finetune.py    —— 合并首轮 + 修改轮，打包为 Qwen3 ChatML 微调 JSONL
 
 前置条件：
   - 在 .env 或环境变量中设置 DEEPSEEK_API_KEY
@@ -128,6 +129,18 @@ def main() -> None:
         "--append", action="store_true",
         help="gen_pairs 追加写入（而非覆盖）raw_pairs.jsonl",
     )
+    parser.add_argument(
+        "--with-supplement", action="store_true",
+        help="步骤3.5：校验后运行补充数据生成（P1低频主题 + P2缺失字段）",
+    )
+    parser.add_argument(
+        "--supplement-p1-only", action="store_true",
+        help="步骤3.5：只补充低频主题（P1: rococo/macaron）",
+    )
+    parser.add_argument(
+        "--supplement-p2-only", action="store_true",
+        help="步骤3.5：只补充缺失字段（P2）",
+    )
     args = parser.parse_args()
 
     # 打印摘要
@@ -186,6 +199,26 @@ def main() -> None:
             _print_summary(success_steps, failed_step, t_start)
             sys.exit(1)
 
+    # ── 步骤 3.5：补充数据（可选）────────────────────────────────────────
+    if skip_early or not args.with_supplement:
+        if not skip_early:
+            print("\n[步骤3.5] 跳过补充数据（使用 --with-supplement 启用）")
+    else:
+        extra = ["--supplement", "--model", args.model]
+        if args.no_render:
+            extra.append("--no-render")
+        if args.supplement_p1_only:
+            extra.append("--p1-only")
+        elif args.supplement_p2_only:
+            extra.append("--p2-only")
+        ok = _run("补充数据（gen_pairs.py --supplement）", "gen_pairs.py", extra)
+        if ok:
+            success_steps.append("步骤3.5 补充数据")
+        else:
+            failed_step = "步骤3.5 gen_pairs --supplement"
+            _print_summary(success_steps, failed_step, t_start)
+            sys.exit(1)
+
     # ── 步骤 4：生成修改轮数据 ────────────────────────────────────────────
     if args.only_pack or args.skip_delta:
         print("\n[步骤4] 跳过修改轮数据生成")
@@ -232,6 +265,7 @@ def _print_summary(
         print("\n输出文件：")
         for p in [
             Path("data/pairs/delta_pairs.jsonl"),
+            Path("data/pairs/delta_reject_log.jsonl"),
             Path("data/finetune/train.jsonl"),
             Path("data/finetune/val.jsonl"),
         ]:
