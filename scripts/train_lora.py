@@ -57,7 +57,7 @@ import torch
 from datasets import load_dataset
 from peft import LoraConfig, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from trl import SFTConfig, SFTTrainer
+from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
 
 # 脚本位于 scripts/ 下，需要把项目根目录加入路径才能 import 本项目模块
 import sys
@@ -79,8 +79,8 @@ LORA_TARGET_MODULES = [
 ]
 
 # 训练超参数
-DEFAULT_EPOCHS      = 3
-DEFAULT_LR          = 2e-4
+DEFAULT_EPOCHS      = 5
+DEFAULT_LR          = 1e-4
 # global batch 的设计目标是 16，通过 PER_DEVICE_BATCH × GRAD_ACCUM × GPU数 维持
 # 推荐 2 张 GPU：PER_DEVICE=8, ACCUM=1, global=16
 # 单卡备用：PER_DEVICE=8, ACCUM=2, global=16（同效果，慢一倍）
@@ -201,6 +201,16 @@ def train(
     if is_main_process:
         print(f"训练集：{len(dataset['train'])} 条  验证集：{len(dataset['validation'])} 条\n")
 
+    # ── DataCollator：只对 assistant 回复部分计算 loss ────────────────────
+    # Qwen3 ChatML 格式中，assistant 回复以 "<|im_start|>assistant\n" 开头。
+    # 不使用 completion-only 时，system+user 占 ~97% 的 token，
+    # 模型大部分梯度用于"背提示词"，真正的 JSON 输出学习信号极弱。
+    response_template = "<|im_start|>assistant\n"
+    data_collator = DataCollatorForCompletionOnlyLM(
+        response_template=response_template,
+        tokenizer=tokenizer,
+    )
+
     # ── SFTTrainer ────────────────────────────────────────────────────────
     trainer = SFTTrainer(
         model=model,
@@ -208,6 +218,7 @@ def train(
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
         peft_config=lora_config,
+        data_collator=data_collator,
         args=SFTConfig(
             # 基础设置
             output_dir=str(output_dir),

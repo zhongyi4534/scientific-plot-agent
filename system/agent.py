@@ -163,6 +163,9 @@ class PlotAgent:
                         data_context,
                         full_spec,
                     )
+                    # 模型在修正阶段触发 ask_user 无法继续修正，直接放弃重试
+                    if correction.get("__ask_user__"):
+                        break
                     candidate = fill_defaults(merge_delta(full_spec, correction))
                     if validate(candidate).ok:
                         full_spec = candidate

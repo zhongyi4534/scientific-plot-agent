@@ -73,6 +73,39 @@ def _strip_markdown(text: str) -> str:
     return text
 
 
+def _extract_json_object(text: str) -> str:
+    """
+    从文本中提取第一个完整的 JSON 对象（{...}），忽略闭合大括号后的多余内容。
+    模型有时在 JSON 后追加自然语言说明，导致 json.loads 失败；此函数通过括号计数
+    精确定位闭合位置，不依赖正则贪婪匹配。
+    """
+    start = text.find("{")
+    if start == -1:
+        return text  # 没有 {，让 json.loads 原样报错
+    depth = 0
+    in_str = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_str:
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return text[start:]  # 未找到匹配的闭合括号，返回从 { 开始的全部内容
+
+
 def _extract_cache_key(data_context: str) -> str | None:
     """从 data_context 摘要字符串中提取缓存键（cache://xxxxxxxx）。"""
     m = _CACHE_KEY_RE.search(data_context)
@@ -142,7 +175,7 @@ def generate_spec(
         print(f"[Qwen3 LoRA 原始响应]:\n{raw_text}")
         print(f"{'='*50}\n")
 
-    parsed: dict = json.loads(_strip_markdown(raw_text))
+    parsed: dict = json.loads(_extract_json_object(_strip_markdown(raw_text)))
 
     # 从工具调用包装结构中提取 arguments
     if "tool" in parsed and "arguments" in parsed:

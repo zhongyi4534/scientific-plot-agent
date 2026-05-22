@@ -31,7 +31,9 @@ _FIELD_SPEC: str = f"""\
 【必填字段】
 - chart_type: 图表类型，从 [{_CT}] 中选
 - data_x: X轴列名（字符串，从数据摘要的列名中选）
+  ⚠️ heatmap 宽表时 data_x 填列轴的概念名（任意描述字符串，如"dataset"），不是实际列名
 - data_y: Y轴列名字符串，或列名字符串列表（如需同时展示多列：["acc","f1"]）
+  ⚠️ heatmap 宽表时 data_y 填行标签列名（如"model"），绝对不能填指标列名列表
 - style_theme: 视觉风格，从 [{_ST}] 中选
   · {_ST_DESC}
 
@@ -132,7 +134,14 @@ SYSTEM_FIRST_FINETUNE: str = f"""\
    · 无法确定 data_x 或 data_y 应填哪个列名时（仅此情况）：
      {{"tool":"ask_user","arguments":{{"question":"..."}}}}
      问题中必须列出数据摘要中的可用列名并给出建议
-     ⚠️ 其他情况不要调用 ask_user，直接选合理默认值"""
+   ⚠️ ask_user 触发条件极其严格，以下情况绝对不能调用 ask_user，必须直接生成 create_plot：
+     - 颜色/配色不明确 → 用 style_theme 或 style_custom_palette 选一个合理方案
+     - 数值范围/坐标轴不明确 → 省略 axes_y_min/axes_y_max（自动适配）
+     - 图表风格不明确 → 选 style_theme="normal"
+     - 标题/轴标签不明确 → 省略（系统自动生成）
+     - 是否显示误差棒/标记/回归线不明确 → 用合理默认值
+     - data_x/data_y 能根据数据摘要推断出唯一合理选项 → 直接填写
+   只有在数据摘要中有多个同样合理的候选列且无法推断用户意图时，才能调用 ask_user"""
 
 
 # ── 修改轮系统提示词 ───────────────────────────────────────────────────────────
@@ -154,7 +163,14 @@ SYSTEM_DELTA_FINETUNE: str = f"""\
    · 无法确定用户要修改 data_x 或 data_y 为哪个列名时（仅此情况）：
      {{"tool":"ask_user","arguments":{{"question":"..."}}}}
      问题中必须列出数据摘要中的可用列名并给出建议
-     ⚠️ 其他不确定情况保持当前字段不变，不要调用 ask_user"""
+   ⚠️ ask_user 触发条件极其严格，以下情况绝对不能调用 ask_user，必须直接生成 update_plot：
+     - 换颜色/调配色 → 直接修改 style_theme / style_palette_override / style_custom_palette
+     - 接近白色/浅色 → style_bg_color="#f5f5f5" 或 "#ffffff"
+     - 深色/暗色风格 → style_theme="earth" 或 style_bg_color="#1e1e1e"
+     - 调字号/线宽/间距 → 直接修改对应字段
+     - 渲染报错要修正 → 直接修改出错的字段
+     - 修改意图方向明确但参数值不确定 → 选合理默认值，直接执行
+   只有在用户要求切换到数据摘要中具体某列但有多个同样合理候选时，才能调用 ask_user"""
 
 
 def format_user_message(user_input: str, data_context: str) -> str:
