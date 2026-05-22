@@ -55,9 +55,14 @@ from pathlib import Path
 
 import torch
 from datasets import load_dataset
-from peft import LoraConfig, TaskType
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
+from peft import LoraConfig, TaskType, get_peft_model
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    DataCollatorForSeq2Seq,
+    Trainer,
+    TrainingArguments,
+)
 
 # 脚本位于 scripts/ 下，需要把项目根目录加入路径才能 import 本项目模块
 import sys
@@ -102,18 +107,12 @@ DEFAULT_OUTPUT_DIR  = Path("output/lora")
 
 def build_dataset(tokenizer: AutoTokenizer) -> dict:
     """
-    加载 JSONL 数据集并应用 Qwen3 chat template，返回包含 'text' 字段的 DatasetDict。
+    加载 JSONL 数据集并预计算 input_ids 和 labels。
 
-    training data 的每条记录格式：
-        {"messages": [
-            {"role": "system",    "content": "..."},
-            {"role": "user",      "content": "...\n输出：/no_think"},
-            {"role": "assistant", "content": "{...json...}"}
-        ]}
-
-    apply_chat_template 会把 messages 转换为 Qwen3 的 ChatML 格式字符串，
-    enable_thinking=False 告知 tokenizer 不插入 <think> 标记，
-    与训练数据中的 /no_think 指令保持一致。
+    labels 中 prompt 部分（system + user + assistant 起始标记）全部设为 -100，
+    只在 assistant 的 JSON 回复 token 上计算 loss。
+    这比 DataCollatorForCompletionOnlyLM 的模板匹配更可靠，避免特殊 token 编码
+    不一致导致全部 label 被 mask、loss 归零的问题。
     """
     dataset = load_dataset(
         "json",
@@ -121,22 +120,47 @@ def build_dataset(tokenizer: AutoTokenizer) -> dict:
     )
 
     def apply_template(examples: dict) -> dict:
-        texts = []
+        input_ids_list: list[list[int]] = []
+        labels_list: list[list[int]] = []
+
         for messages in examples["messages"]:
-            text = tokenizer.apply_chat_template(
+            # 完整序列（含 assistant 回复）
+            full_text: str = tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
-                add_generation_prompt=False,  # 训练时包含完整对话（含 assistant 回复）
+                add_generation_prompt=False,
                 enable_thinking=False,
             )
-            texts.append(text)
-        return {"text": texts}
+            # Prompt 部分（system + user），末尾自动附加 <|im_start|>assistant\n
+            # 这正好是 assistant 回复开始之前的全部内容
+            prompt_text: str = tokenizer.apply_chat_template(
+                messages[:-1],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+
+            # 两段文本均不额外添加 BOS/EOS，因为 apply_chat_template 已包含所有特殊 token
+            full_ids: list[int] = tokenizer(
+                full_text, add_special_tokens=False
+            )["input_ids"]
+            prompt_len: int = len(
+                tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
+            )
+
+            # prompt 部分 mask 为 -100，只在 assistant 回复 token 上产生梯度
+            labels: list[int] = [-100] * prompt_len + full_ids[prompt_len:]
+
+            input_ids_list.append(full_ids[:MAX_SEQ_LENGTH])
+            labels_list.append(labels[:MAX_SEQ_LENGTH])
+
+        return {"input_ids": input_ids_list, "labels": labels_list}
 
     dataset = dataset.map(
         apply_template,
         batched=True,
         remove_columns=["messages"],
-        desc="应用 chat template",
+        desc="应用 chat template 并计算 labels",
     )
     return dataset
 
@@ -175,13 +199,12 @@ def train(
     tokenizer.padding_side = "right"
 
     # ── 基础模型 ──────────────────────────────────────────────────────────
-    # 注意：training 阶段不传 device_map，由 SFTTrainer + accelerate 负责设备分配。
+    # 注意：training 阶段不传 device_map，由 Trainer + accelerate 负责设备分配。
     # device_map="auto" 会做 tensor parallel（切割模型层），与 DDP 不兼容。
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         torch_dtype=torch.bfloat16,   # A100 原生支持 bf16，精度与 fp32 接近
         trust_remote_code=True,
-        # 不设 device_map，由 Trainer 统一管理
     )
     # 启用梯度检查点（以少量重计算换显存，A100 上几乎无速度损失）
     model.enable_input_require_grads()
@@ -195,31 +218,33 @@ def train(
         bias="none",
         task_type=TaskType.CAUSAL_LM,
     )
+    model = get_peft_model(model, lora_config)
 
     # ── 数据集 ────────────────────────────────────────────────────────────
     dataset = build_dataset(tokenizer)
     if is_main_process:
         print(f"训练集：{len(dataset['train'])} 条  验证集：{len(dataset['validation'])} 条\n")
 
-    # ── DataCollator：只对 assistant 回复部分计算 loss ────────────────────
-    # Qwen3 ChatML 格式中，assistant 回复以 "<|im_start|>assistant\n" 开头。
-    # 不使用 completion-only 时，system+user 占 ~97% 的 token，
-    # 模型大部分梯度用于"背提示词"，真正的 JSON 输出学习信号极弱。
-    response_template = "<|im_start|>assistant\n"
-    data_collator = DataCollatorForCompletionOnlyLM(
-        response_template=response_template,
+    # ── DataCollator ──────────────────────────────────────────────────────
+    # labels 已在 build_dataset 中预计算（prompt 部分为 -100），
+    # 此处只需要带 padding 的标准 collator。
+    # label_pad_token_id=-100 确保 padding 位置不参与 loss 计算。
+    data_collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
+        model=model,
+        padding=True,
+        pad_to_multiple_of=8,
+        label_pad_token_id=-100,
     )
 
-    # ── SFTTrainer ────────────────────────────────────────────────────────
-    trainer = SFTTrainer(
+    # ── Trainer ───────────────────────────────────────────────────────────
+    trainer = Trainer(
         model=model,
         tokenizer=tokenizer,
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
-        peft_config=lora_config,
         data_collator=data_collator,
-        args=SFTConfig(
+        args=TrainingArguments(
             # 基础设置
             output_dir=str(output_dir),
             num_train_epochs=epochs,
@@ -245,7 +270,7 @@ def train(
             # 评估与保存
             eval_strategy="epoch",
             save_strategy="epoch",
-            save_total_limit=2,            # 只保留最近 2 个 checkpoint，节省磁盘
+            save_total_limit=2,
             load_best_model_at_end=True,
             metric_for_best_model="eval_loss",
             greater_is_better=False,
@@ -253,12 +278,11 @@ def train(
             # 日志
             logging_steps=10,
             logging_dir=str(output_dir / "logs"),
-            report_to="none",              # 不上传 wandb / tensorboard（可改为 "tensorboard"）
+            report_to="none",
 
             # 数据
-            dataset_text_field="text",
-            max_seq_length=MAX_SEQ_LENGTH,
-            dataloader_num_workers=4,      # Linux 服务器可用多进程加速数据加载
+            dataloader_num_workers=4,
+            remove_unused_columns=False,   # 保留 input_ids / labels 列
 
             # 其他
             seed=42,
@@ -278,10 +302,8 @@ def train(
     # ── 保存最终结果 ──────────────────────────────────────────────────────
     # 只保存 LoRA adapter，体积约 50MB（远小于完整模型权重 ~3.4GB）
     final_dir = output_dir / "final"
-    trainer.save_model(final_dir)
-    
-
     if is_main_process:
+        model.save_pretrained(str(final_dir))   # 只写 adapter 权重
         tokenizer.save_pretrained(str(final_dir))
         print(f"\n{'='*55}")
         print(f"  训练完成！")
