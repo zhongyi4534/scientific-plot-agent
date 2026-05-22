@@ -24,12 +24,16 @@ scientific-plot-agent/
 ├── ui/
 │   └── app.py             # C线：Gradio 界面
 ├── scripts/
-│   ├── run_synthesis.py   # 一键运行完整训练数据合成流水线（五步）
-│   ├── gen_csv.py         # 步骤1：生成 64 个场景训练 CSV
-│   ├── gen_pairs.py       # 步骤2：调用 DeepSeek API 合成首轮配对
-│   ├── validate_pairs.py  # 步骤3：四级校验过滤（字段+列名+语义+渲染）
-│   ├── gen_delta.py       # 步骤4：生成修改轮 (user_input, delta) 配对
-│   └── pack_finetune.py   # 步骤5：合并首轮+修改轮，打包为 Qwen3 微调 JSONL
+│   ├── run_synthesis.py         # 一键运行完整训练数据合成流水线（五步）
+│   ├── gen_csv.py               # 步骤1：生成 64 个场景训练 CSV
+│   ├── gen_pairs.py             # 步骤2：调用 DeepSeek API 合成首轮配对
+│   ├── validate_pairs.py        # 步骤3：四级校验过滤（字段+列名+语义+渲染）
+│   ├── gen_delta.py             # 步骤4：生成修改轮 (user_input, delta) 配对
+│   ├── pack_finetune.py         # 步骤5：合并首轮+修改轮，打包为 Qwen3 微调 JSONL
+│   ├── train_lora.py            # Qwen3-1.7B LoRA 微调脚本（服务器运行）
+│   ├── gen_large_data.py        # 生成大规模 CSV（s45/s46）及对应训练数据对
+│   ├── refresh_data_contexts.py # data_context 格式变更后刷新所有配对文件
+│   └── diagnose_tokens.py       # 诊断 token 分布，分析 MAX_SEQ_LENGTH 截断
 ├── data/
 │   ├── example_bar.csv    # 示例数据（提交到 git）
 │   ├── example_line.csv   # 示例数据（提交到 git）
@@ -90,6 +94,38 @@ python scripts/run_synthesis.py --skip-csv --model deepseek-chat
 
 五步流水线自动依次执行：生成CSV → 合成首轮配对 → 四级校验过滤 → 生成修改轮配对 → 打包 JSONL。
 最终训练集输出到 `data/finetune/train.jsonl`，验证集到 `data/finetune/val.jsonl`。
+
+补充大规模 CSV 及手动标注数据对（可选，增加覆盖范围）：
+
+```bash
+# 生成 s45_llm_benchmark.csv (240行) + s46_hparam_search.csv (180行) 及对应训练对
+python scripts/gen_large_data.py
+
+# 仅生成 CSV（不生成训练对）
+python scripts/gen_large_data.py --csv-only
+
+# 仅生成训练对（CSV 已存在时）
+python scripts/gen_large_data.py --pairs-only
+```
+
+### 5. LoRA 微调训练（可选，在服务器上执行）
+
+```bash
+# 单卡训练（使用第 0 张 GPU）
+CUDA_VISIBLE_DEVICES=0 python scripts/train_lora.py
+
+# 指定输出目录和超参数
+CUDA_VISIBLE_DEVICES=0 python scripts/train_lora.py \
+    --base-model /mnt/data/model/Qwen3-1.7B \
+    --output output/lora_v2 \
+    --epochs 5 \
+    --lr 1e-4
+
+# 训练前诊断 token 分布（确认 MAX_SEQ_LENGTH 设置合理）
+python scripts/diagnose_tokens.py --base-model /mnt/data/model/Qwen3-1.7B
+```
+
+显存约 8–10 GB（A100-40GB），训练时长约 30–60 分钟。LoRA adapter 输出到 `output/lora/final/`。
 
 ---
 
